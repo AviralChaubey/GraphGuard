@@ -4,6 +4,7 @@ pandas
 scipy
 scikit-learn
 networkx
+pyarrow
 
 # graph deep learning
 torch

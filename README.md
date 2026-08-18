@@ -77,7 +77,17 @@ ds = EllipticBitcoinDataset(root="data/raw/elliptic")
 
 Elliptic (Bitcoin) · IEEE-CIS (card fraud) · PaySim (mobile money).
 Links, sizes and how to turn each into a graph: **`docs/DATASETS.md`**.
-Raw data is gitignored — never commit it.
+Raw data is gitignored — never commit it (IEEE-CIS competition terms forbid redistribution).
+
+## Preprocessing
+
+```bash
+python scripts/preprocess.py --dataset elliptic
+python scripts/preprocess.py --dataset ieee_cis --nrows 50000   # smoke run
+```
+
+Every loader returns a `GraphBundle` — the stable contract between M1 and M2.
+Details and the design decisions worth defending: **`docs/PREPROCESSING.md`**.
 
 ---
 

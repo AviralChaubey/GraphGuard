@@ -14,9 +14,12 @@ results/checkpoints/*
 # python
 __pycache__/
 *.py[cod]
-.myenv/
-myenv/
+.venv/
+venv/
 env/
+myenv/
+*env/
+ENV/
 .ipynb_checkpoints/
 .pytest_cache/
 
