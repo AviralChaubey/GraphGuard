@@ -1,0 +1,28 @@
+# core
+numpy
+pandas
+scipy
+scikit-learn
+networkx
+
+# graph deep learning
+torch
+torch-geometric
+
+# graph db
+neo4j
+
+# api
+fastapi
+uvicorn[standard]
+pydantic
+
+# viz / utils
+matplotlib
+seaborn
+tqdm
+pyyaml
+python-dotenv
+
+# testing
+pytest

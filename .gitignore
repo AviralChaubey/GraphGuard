@@ -1,0 +1,32 @@
+# data (never commit datasets)
+data/raw/*
+data/processed/*
+data/external/*
+!data/**/.gitkeep
+
+# model artifacts
+results/checkpoints/*
+!results/checkpoints/.gitkeep
+*.pt
+*.pth
+*.pkl
+
+# python
+__pycache__/
+*.py[cod]
+.myenv/
+myenv/
+env/
+.ipynb_checkpoints/
+.pytest_cache/
+
+# node
+node_modules/
+dashboard/build/
+dashboard/dist/
+
+# env & editors
+.env
+.DS_Store
+.idea/
+.vscode/
