@@ -38,3 +38,23 @@ ring:
   community_method: louvain
   min_ring_size: 3
   score_threshold: 0.7
+
+eval:
+  # PR-AUC is the headline metric, not accuracy — see docs/EVALUATION.md
+  primary_metric: pr_auc
+  precision_at_k: [50, 100, 500, 1000]
+  run_baselines: true
+  include_network_baseline: true    # the honest baseline: does OUR gnn beat
+                                    # gradient boosting + degree/pagerank?
+
+sampler:
+  k_hops: 2
+  max_per_hop: 5000                 # without this, one hop through a hub entity
+                                    # pulls in the entire graph
+
+neo4j:
+  uri: bolt://localhost:7687
+  user: neo4j
+  database: neo4j
+  batch_size: 10000
+  # password comes from the NEO4J_PASSWORD environment variable — never commit it
