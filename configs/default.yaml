@@ -43,7 +43,16 @@ checkpoints:
 explain:
   method: gnnexplainer
   epochs: 200
+  lr: 0.01
   top_k_edges: 10
+  edge_threshold: 0.1        # edges below this weight are not evidence
+  inflow_window_hours: 48    # window quoted in generated reasons
+
+api:
+  cors_origins: ["*"]        # tighten before any real deployment
+
+feedback:
+  store_path: results/feedback.jsonl
 
 ring:
   community_method: louvain
