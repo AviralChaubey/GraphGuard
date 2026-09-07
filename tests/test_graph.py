@@ -40,3 +40,56 @@ def test_normalize_uses_train_stats_only(toy_bundle):
     X = toy_bundle.features["account"]
     assert abs(X[tr].mean()) < 1e-5          # train is centred
     assert abs(X.mean()) > 1e-9              # the full set is not
+
+
+# --- to_pyg contract with workstream B -------------------------------------
+
+def _torch_available():
+    try:
+        import torch_geometric  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def test_to_pyg_attaches_masks(toy_bundle):
+    """B consumes data.train_mask / data.test_mask — they must always exist."""
+    if not _torch_available():
+        return
+    from src.graph.build import to_pyg
+    d = to_pyg(toy_bundle)
+    assert hasattr(d, "train_mask") and hasattr(d, "test_mask")
+    assert d.train_mask.sum() > 0 and d.test_mask.sum() > 0
+
+
+def test_to_pyg_masks_exclude_unknown_labels(toy_bundle):
+    """-1 must never enter the supervised loss."""
+    if not _torch_available():
+        return
+    from src.graph.build import to_pyg
+    d = to_pyg(toy_bundle)
+    y = d.y.numpy()
+    assert (y[d.train_mask.numpy()] >= 0).all()
+    assert (y[d.test_mask.numpy()] >= 0).all()
+
+
+def test_to_pyg_masks_are_disjoint_and_temporal(toy_bundle):
+    if not _torch_available():
+        return
+    from src.graph.build import to_pyg
+    d = to_pyg(toy_bundle)
+    tr, te = d.train_mask.numpy(), d.test_mask.numpy()
+    assert not (tr & te).any()
+    t = d.time.numpy()
+    assert t[tr].max() <= t[te].min()      # train is the past, test the future
+
+
+def test_to_pyg_rejects_mismatched_mask(toy_bundle):
+    if not _torch_available():
+        return
+    import numpy as np
+    import pytest
+    from src.graph.build import to_pyg
+    bad = np.ones(5, dtype=bool)
+    with pytest.raises(ValueError, match="does not belong to this bundle"):
+        to_pyg(toy_bundle, train_mask=bad, test_mask=bad)

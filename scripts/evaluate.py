@@ -63,7 +63,9 @@ def _score_checkpoint(path: str, bundle):
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--dataset", required=True, choices=["elliptic", "ieee_cis", "paysim"])
+    p.add_argument("--dataset", default=None,
+                   choices=["elliptic", "ieee_cis", "paysim"],
+                   help="defaults to data.dataset in the config file")
     p.add_argument("--config", default="configs/default.yaml")
     p.add_argument("--nrows", type=int, default=None)
     p.add_argument("--baselines", action="store_true", help="run baseline models")
@@ -78,9 +80,12 @@ def main() -> None:
     cfg = load_config(args.config)
     set_seed(cfg.get("seed", 42))
 
-    kwargs = {"nrows": args.nrows} if args.nrows and args.dataset != "elliptic" else {}
-    bundle = load_dataset(args.dataset, **kwargs)
-    train, test = _load_splits(args.dataset, bundle, cfg["data"].get("train_ratio", 0.7))
+    dataset = args.dataset or cfg["data"]["dataset"]
+    log.info("dataset: %s", dataset)
+
+    kwargs = {"nrows": args.nrows} if args.nrows and dataset != "elliptic" else {}
+    bundle = load_dataset(dataset, **kwargs)
+    train, test = _load_splits(dataset, bundle, cfg["data"].get("train_ratio", 0.7))
 
     y = bundle.labels[bundle.target_node_type]
     log.info("test set: %d nodes, %d labelled positives",
@@ -112,7 +117,7 @@ def main() -> None:
 
     out = PROJECT_ROOT / "results" / "metrics"
     out.mkdir(parents=True, exist_ok=True)
-    stem = f"{args.dataset}_eval{('_' + args.tag) if args.tag else ''}"
+    stem = f"{dataset}_eval{('_' + args.tag) if args.tag else ''}"
     (out / f"{stem}.txt").write_text(report + "\n")
     if results:
         (out / f"{stem}.json").write_text(json.dumps(
