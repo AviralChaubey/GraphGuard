@@ -1,40 +1,20 @@
-project: graphguard
 seed: 42
 
-data:
-  dataset: elliptic          # elliptic | ieee_cis | paysim
-  raw_dir: data/raw
-  processed_dir: data/processed
-  temporal_split: true       # train on past time-steps, test on future
-  train_ratio: 0.7
-
-graph:
-  node_types: [account, device, merchant, transaction]
-  k_hops: 2
-  add_shared_device_edges: true
-
-model:
-  encoder: graphsage
-  hidden_dim: 128
-  num_layers: 2
-  gat_heads: 4
-  dropout: 0.3
-  use_autoencoder_head: true
-
-train:
-  epochs: 100
-  lr: 0.001
-  weight_decay: 0.0005
-  batch_size: 1024
-  class_weight: auto         # handles fraud/non-fraud imbalance
-  early_stopping_patience: 15
-
+# --- Workstream C -----------------------------------------------------------
 explain:
-  method: gnnexplainer
-  epochs: 200
-  top_k_edges: 10
+  epochs: 200          # GNNExplainer optimisation steps
+  lr: 0.01
+  top_k_edges: 8        # evidence subgraph size cap -> keeps explanations human-readable
+  edge_threshold: 0.1    # drop edges with mask weight below this even if inside top_k
+  inflow_window_hours: 24
 
-ring:
-  community_method: louvain
-  min_ring_size: 3
-  score_threshold: 0.7
+api:
+  host: "0.0.0.0"
+  port: 8000
+  cors_origins: ["http://localhost:5173"]   # vite dev server
+
+feedback:
+  store_path: "results/feedback.jsonl"
+
+dashboard:
+  api_base_url: "http://localhost:8000"
