@@ -2,32 +2,43 @@ project: graphguard
 seed: 42
 
 data:
-  dataset: elliptic          # elliptic | ieee_cis | paysim
+  dataset: elliptic          # elliptic | ieee_cis | paysim  <- single source of truth
   raw_dir: data/raw
   processed_dir: data/processed
   temporal_split: true       # train on past time-steps, test on future
   train_ratio: 0.7
 
 graph:
-  node_types: [account, device, merchant, transaction]
+  node_types: [transaction, card, device, address, email, account]
   k_hops: 2
-  add_shared_device_edges: true
+  add_shared_entity_edges: true
 
+# Model architecture AND its training hyperparameters live together, so a single
+# checkpoint's provenance is one block of config rather than two.
 model:
   encoder: graphsage
   hidden_dim: 128
-  num_layers: 2
+  num_sage_layers: 2
+  num_gat_layers: 1
   gat_heads: 4
   dropout: 0.3
   use_autoencoder_head: true
-
-train:
+  # training
   epochs: 100
-  lr: 0.001
+  learning_rate: 0.001
   weight_decay: 0.0005
   batch_size: 1024
-  class_weight: auto         # handles fraud/non-fraud imbalance
   early_stopping_patience: 15
+  # pos_weight is recomputed from the actual training labels at run time, not
+  # read from here — a hardcoded value is dataset-specific and easy to forget.
+
+autoencoder:
+  latent_dim: 32
+  # trained on licit (label == 0) nodes only: fraud must reconstruct badly,
+  # that poor reconstruction IS the anomaly signal.
+
+checkpoints:
+  dir: results/checkpoints
 
 explain:
   method: gnnexplainer
@@ -36,7 +47,7 @@ explain:
 
 ring:
   community_method: louvain
-  min_ring_size: 3
+  min_size: 3
   score_threshold: 0.7
 
 eval:

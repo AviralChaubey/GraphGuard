@@ -26,6 +26,7 @@ class DetectionMetrics:
     pr_auc: float
     f1_at_best: float
     best_threshold: float
+    f1_at_half: float = 0.0
     precision_at_k: dict = field(default_factory=dict)
     recall_at_k: dict = field(default_factory=dict)
 
@@ -37,7 +38,8 @@ class DetectionMetrics:
         return (f"n={self.n_evaluated:,} pos={self.n_positive:,} "
                 f"({self.positive_rate:.3%})\n"
                 f"PR-AUC={self.pr_auc:.4f}  ROC-AUC={self.roc_auc:.4f}  "
-                f"F1={self.f1_at_best:.4f} @thr={self.best_threshold:.3f}\n{pk}")
+                f"F1={self.f1_at_best:.4f} @thr={self.best_threshold:.3f}  "
+                f"F1@0.5={self.f1_at_half:.4f}\n{pk}")
 
 
 def evaluate_detection(y_true, y_score, mask=None,
@@ -71,6 +73,9 @@ def evaluate_detection(y_true, y_score, mask=None,
         p_at_k[k] = hits / k
         r_at_k[k] = hits / int(y.sum())
 
+    # F1 at the deployed operating point, not just the best achievable one
+    f1_half = float(f1_score(y, (s >= 0.5).astype(int), zero_division=0))
+
     return DetectionMetrics(
         n_evaluated=int(len(y)), n_positive=int(y.sum()),
         positive_rate=float(y.mean()),
@@ -78,6 +83,7 @@ def evaluate_detection(y_true, y_score, mask=None,
         pr_auc=float(average_precision_score(y, s)),
         f1_at_best=float(f1s[best]),
         best_threshold=best_thr,
+        f1_at_half=f1_half,
         precision_at_k=p_at_k, recall_at_k=r_at_k)
 
 
