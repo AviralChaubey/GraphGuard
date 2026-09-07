@@ -28,6 +28,10 @@ SURFACE, GRID = "#fcfcfb", "#e3e2de"
 
 FIG_DIR = PROJECT_ROOT / "results" / "figures"
 
+# Below this ratio of (distinct entities / edges), an entity type is a category
+# rather than an identity, and its fan-out carries no ring information.
+IDENTITY_RATIO_MIN = 0.01
+
 
 def _style(ax, title: str = "", xlabel: str = "", ylabel: str = ""):
     """Recessive grid and axes; the data carries the ink."""
@@ -81,19 +85,48 @@ def fan_out_histogram(bundle: GraphBundle, out_dir=None):
 
     for ax, (rel, ent) in zip(axes, ent_rels):
         counts = bundle.edges[rel].groupby("dst").size().to_numpy()
-        stats[ent] = {"n_entities": len(counts), "max": int(counts.max()),
+        n_ent, n_edge = len(counts), int(counts.sum())
+        # An entity type is IDENTITY-LIKE if it has many distinct values
+        # relative to the transactions it touches (a card, a device). It is
+        # CATEGORY-LIKE if a handful of values cover everything
+        # (P_emaildomain = "gmail.com"; addr1 = a region code).
+        #
+        # This distinction decides whether fan-out means anything. 40 cards on
+        # one device is a ring. 74,699 transactions on gmail.com is Tuesday.
+        identity_ratio = n_ent / max(n_edge, 1)
+        is_identity = identity_ratio >= IDENTITY_RATIO_MIN
+        stats[ent] = {"n_entities": n_ent, "max": int(counts.max()),
                       "median": float(np.median(counts)),
-                      "p99": float(np.quantile(counts, 0.99))}
+                      "p99": float(np.quantile(counts, 0.99)),
+                      "identity_ratio": float(identity_ratio),
+                      "is_identity": bool(is_identity)}
+        if not is_identity:
+            log.warning("entity '%s' looks CATEGORY-like (%d distinct values over "
+                        "%d edges) — its fan-out is not a ring signal; consider "
+                        "making it a transaction feature instead of a node type",
+                        ent, n_ent, n_edge)
+
+        # Name the biggest hubs. A high fan-out is only a ring if the key is a
+        # real identity — a key full of '?' means many distinct entities
+        # collapsed into one node because their components were missing, which
+        # would be a data bug masquerading as a fraud ring.
+        top_idx = np.argsort(-counts)[:5]
+        names = bundle.nodes[ent]["node_id"].to_numpy()
+        stats[ent]["top_hubs"] = [(str(names[i]), int(counts[i])) for i in top_idx]
         bins = np.logspace(0, np.log10(max(counts.max(), 2)), 30)
-        ax.hist(counts, bins=bins, color=C1, edgecolor=SURFACE, linewidth=0.6)
+        colour = C1 if is_identity else MUTED
+        ax.hist(counts, bins=bins, color=colour, edgecolor=SURFACE, linewidth=0.6)
         ax.set_xscale("log"); ax.set_yscale("log")
-        _style(ax, ent.capitalize(), "transactions per entity (log)",
+        title = ent.capitalize() + ("" if is_identity else "  (category — not a ring signal)")
+        _style(ax, title, "transactions per entity (log)",
                "entities (log)" if ax is axes[0] else "")
         # direct label: the number that makes the argument
-        ax.axvline(counts.max(), color=C2, linewidth=2, alpha=.9)
+        ax.axvline(counts.max(), color=C2 if is_identity else MUTED,
+                   linewidth=2, alpha=.9)
         ax.annotate(f"max {counts.max():,}", xy=(counts.max(), ax.get_ylim()[1]),
                     xytext=(-6, -12), textcoords="offset points", ha="right",
-                    color=C2, fontsize=9.5, fontweight="semibold")
+                    color=C2 if is_identity else MUTED, fontsize=9.5,
+                    fontweight="semibold")
 
     fig.suptitle(f"Entity fan-out — {bundle.name}", color=INK, fontsize=13,
                  x=0.005, ha="left", fontweight="semibold")
@@ -101,6 +134,74 @@ def fan_out_histogram(bundle: GraphBundle, out_dir=None):
     path = _save(fig, f"{bundle.name}_fanout", out_dir)
     plt.close(fig)
     return {"path": path, "stats": stats}
+
+
+def _wilson_lower_bound(successes: np.ndarray, n: np.ndarray,
+                        z: float = 1.96) -> np.ndarray:
+    """Lower bound of the 95% Wilson confidence interval on a proportion.
+
+    This is the ranking we need. Sorting by fraud COUNT rewards big entities
+    (a 4,314-transaction browser bucket at 10% wins); sorting by fraud RATE
+    rewards noise (2 transactions, both fraud = 100%). The Wilson lower bound
+    asks "what is the *worst* the true rate plausibly is, given this much
+    evidence?" — so it demands both a high rate and enough transactions to
+    believe it. 18/20 beats 422/4314, which is the correct ordering for rings.
+    """
+    n = np.maximum(n, 1)
+    phat = successes / n
+    denom = 1 + z ** 2 / n
+    centre = phat + z ** 2 / (2 * n)
+    margin = z * np.sqrt(phat * (1 - phat) / n + z ** 2 / (4 * n ** 2))
+    return (centre - margin) / denom
+
+
+def fraud_concentration(bundle: GraphBundle, min_txns: int = 5,
+                        top_n: int = 10) -> dict:
+    """Entities whose transactions are disproportionately fraudulent.
+
+    THIS is the ring evidence, not raw fan-out. Fan-out alone measures how
+    *popular* an entity is — "Windows 10 + Chrome 63" tops that list and is not
+    a ring. What identifies a ring is CONCENTRATION: an entity whose
+    transactions are fraudulent far above the base rate.
+
+    "One card key carries 41 transactions, 32 of them fraudulent — 77% against
+    a 3% base rate" is a claim that survives someone asking what that entity is.
+    "One device has 4,839 transactions" does not.
+
+    Descriptive statistics over labelled data, used to characterise the dataset
+    — not a model input, so there is no leakage concern.
+    """
+    y = bundle.labels[bundle.target_node_type]
+    base = float((y == 1).sum() / max((y >= 0).sum(), 1))
+    out = {"base_rate": base, "entities": {}}
+
+    for (s_t, rel, d_t), e in bundle.edges.items():
+        if s_t != bundle.target_node_type or d_t == s_t:
+            continue
+        lab = y[e["src"].to_numpy()]
+        df = pd.DataFrame({"ent": e["dst"].to_numpy(), "y": lab})
+        df = df[df["y"] >= 0]
+        g = df.groupby("ent")["y"].agg(["size", "sum"])
+        g = g[g["size"] >= min_txns]
+        if g.empty:
+            continue
+        g["rate"] = g["sum"] / g["size"]
+        g["wilson"] = _wilson_lower_bound(g["sum"].to_numpy(), g["size"].to_numpy())
+        # Rank by the Wilson lower bound: high rate AND enough evidence.
+        g = g.sort_values("wilson", ascending=False).head(top_n)
+
+        names = bundle.nodes[d_t]["node_id"].to_numpy()
+        out["entities"][d_t] = [
+            {"node_id": str(names[i]), "n_txns": int(r["size"]),
+             "n_fraud": int(r["sum"]), "fraud_rate": float(r["rate"]),
+             "wilson_lb": float(r["wilson"]),
+             "lift": float(r["rate"] / base) if base else 0.0}
+            for i, r in g.iterrows()]
+        top = out["entities"][d_t][0]
+        log.info("entity '%s': top concentration %d/%d fraud (%.0f%%, %.0fx base, "
+                 "Wilson LB %.0f%%)", d_t, top["n_fraud"], top["n_txns"],
+                 100 * top["fraud_rate"], top["lift"], 100 * top["wilson_lb"])
+    return out
 
 
 def degree_distribution(bundle: GraphBundle, out_dir=None):
@@ -218,6 +319,7 @@ def run_all(bundle: GraphBundle, out_dir=None) -> dict:
     matplotlib.use("Agg")
     return {
         "fan_out": fan_out_histogram(bundle, out_dir),
+        "concentration": fraud_concentration(bundle),
         "degree": degree_distribution(bundle, out_dir),
         "fraud_over_time": fraud_rate_over_time(bundle, out_dir),
         "label_coverage": label_coverage(bundle, out_dir),

@@ -1,0 +1,61 @@
+EDA — ieee_cis
+========================================
+
+GraphBundle<ieee_cis>  target=transaction
+  node[transaction]: 200,000, feat=44, fraud=6024, licit=193976, unknown=0
+  node[card]: 10,121, feat=5, fraud=0, licit=0, unknown=10121
+  node[device]: 2,929, feat=5, fraud=0, licit=0, unknown=2929
+  edge('transaction', 'used_card', 'card'): 200,000
+  edge('transaction', 'used_device', 'device'): 68,387
+
+Entity fan-out:
+  entity     distinct   median        p99        max  kind
+  card         10,121      3.0      330.0      4,374  identity
+  device        2,929      2.0      482.4      4,839  identity
+
+  Largest hubs (check these are real identities, not '?'-filled
+  keys — a key whose components were all missing would look like
+  a huge ring but is a data artifact):
+    card        4,374  card:9500|321.0|150.0|226.0|visa|debit
+    card        3,971  card:7919|194.0|150.0|202.0|mastercard|debit
+    card        3,673  card:15885|545.0|185.0|138.0|visa|debit
+    device      4,839  device:Windows|desktop|Windows 10|chrome 63.0
+    device      4,314  device:Windows|desktop|?|chrome 63.0
+    device      3,038  device:Windows|desktop|Windows 7|chrome 63.0
+
+  NOTE: fan-out alone is NOT ring evidence. It measures how popular
+  an entity is, and the most popular values are common browser
+  configurations. See fraud concentration below for the real signal.
+
+Fraud concentration — THE RING EVIDENCE
+  Base fraud rate: 3.01%
+  Entities whose transactions are disproportionately fraudulent:
+  Ranked by Wilson 95% lower bound — demands a high rate AND
+  enough transactions to believe it, so neither big buckets nor
+  2-transaction flukes can top the list.
+    entity     txns  fraud   rate   lift     LB  key
+    card         11     11  100%    33x   74%  card:9499|555.0|150.0|226.0|visa|debit
+    card         22     20   91%    30x   72%  card:5853|225.0|150.0|117.0|mastercard|debit
+    card          9      9  100%    33x   70%  card:12422|390.0|150.0|224.0|mastercard|debit
+    card         29     25   86%    29x   69%  card:4693|417.0|150.0|195.0|visa|debit
+    card         14     13   93%    31x   69%  card:12023|216.0|150.0|224.0|mastercard|credit
+    device       78     75   96%    32x   89%  device:SM-A300H Build/LRX22G|mobile|?|chrome 63.0 fo
+    device       12     12  100%    33x   76%  device:Blade L3 Build/KOT49H|mobile|?|chrome 61.0 fo
+    device       11     11  100%    33x   74%  device:SM-N920A Build/MMB29K|mobile|?|chrome 61.0 fo
+    device       11     11  100%    33x   74%  device:E6603 Build/32.4.A.1.54|mobile|?|chrome 58.0 
+    device       10     10  100%    33x   72%  device:NOKIA|mobile|?|edge
+
+  >> Headline: one device carries 78 transactions, 75 of them
+     fraudulent — 96% against a 3.0% base rate (32x lift, 95% LB 89%).
+     Each of those transactions looks ordinary alone. The
+     concentration is only visible in the graph.
+
+Fraud rate (labelled only): 3.0120%
+Temporal split cutoff at time-step 33
+
+Label coverage:
+  transaction  fraud   6,024 | licit  193,976 | unknown        0  (0% unlabelled)
+  card         fraud       0 | licit        0 | unknown   10,121  (100% unlabelled)
+  device       fraud       0 | licit        0 | unknown    2,929  (100% unlabelled)
+
+Figures written to results/figures/

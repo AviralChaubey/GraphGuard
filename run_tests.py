@@ -42,6 +42,7 @@ except ImportError:                     # fallback: minimal shim so imports work
     shim.mark = types.SimpleNamespace(
         parametrize=lambda *a, **k: (lambda f: f),
         skip=lambda *a, **k: (lambda f: f))
+    shim.approx = lambda v, **k: v
     sys.modules["pytest"] = shim
 
 from src.data.base import GraphBundle
@@ -63,6 +64,19 @@ def toy_bundle():
     b.labels["account"] = y
     b.time["account"] = t
     return b
+
+
+def store():
+    """Fixture for the API tests: a throwaway alert store with two rings."""
+    import tempfile
+    from src.api.store import AlertStore
+    s = AlertStore(pathlib.Path(tempfile.mkdtemp()) / "alerts.db")
+    s.put_ring("r_001", "ieee_cis", 0.94, 5, "star",
+               [{"id": 0, "node_id": "txn:1", "type": "transaction", "score": 0.94},
+                {"id": 5, "node_id": "device:SM-A300H", "type": "device"}],
+               [{"src": 0, "dst": 5, "relation": "used_device", "weight": 0.93}])
+    s.put_ring("r_002", "ieee_cis", 0.71, 3, "chain", [], [])
+    return s
 
 
 def hetero_bundle():
@@ -91,9 +105,11 @@ def hetero_bundle():
     return load_ieee_cis(root=tp)
 
 
-FIXTURES = {"toy_bundle": toy_bundle, "hetero_bundle": hetero_bundle}
+FIXTURES = {"toy_bundle": toy_bundle, "hetero_bundle": hetero_bundle,
+            "store": store}
 MODULES = ["tests.test_eval", "tests.test_graph", "tests.test_eda",
-           "tests.test_paysim_features", "tests.test_preprocess"]
+           "tests.test_paysim_features", "tests.test_preprocess",
+           "tests.test_explain", "tests.test_api"]
 
 
 def main() -> int:

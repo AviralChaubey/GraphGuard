@@ -41,15 +41,67 @@ def main() -> None:
 
     fo = res.get("fan_out")
     if fo:
-        lines.append("Entity fan-out (evidence that rings exist in the data):")
-        for ent, s in fo["stats"].items():
-            lines.append(f"  {ent:<9} {s['n_entities']:>8,} entities | "
-                         f"median {s['median']:>6.1f} | p99 {s['p99']:>8.1f} | "
-                         f"MAX {s['max']:>8,}")
-        top = max(fo["stats"].items(), key=lambda kv: kv[1]["max"])
-        lines += ["", f"  >> Headline: one {top[0]} is linked to {top[1]['max']:,} "
-                      f"transactions, against a median of {top[1]['median']:.0f}.",
-                  "     A per-transaction model cannot see that concentration.", ""]
+        lines.append("Entity fan-out:")
+        lines.append(f"  {'entity':<9} {'distinct':>9} {'median':>8} {'p99':>10} "
+                     f"{'max':>10}  kind")
+        for ent, st in fo["stats"].items():
+            kind = "identity" if st["is_identity"] else "CATEGORY (not a ring signal)"
+            lines.append(f"  {ent:<9} {st['n_entities']:>9,} {st['median']:>8.1f} "
+                         f"{st['p99']:>10.1f} {st['max']:>10,}  {kind}")
+
+        lines.append("")
+        lines.append("  Largest hubs (check these are real identities, not '?'-filled")
+        lines.append("  keys — a key whose components were all missing would look like")
+        lines.append("  a huge ring but is a data artifact):")
+        for ent, st in fo["stats"].items():
+            for name, cnt in st.get("top_hubs", [])[:3]:
+                lines.append(f"    {ent:<8} {cnt:>8,}  {name[:70]}")
+
+        ident = {k: v for k, v in fo["stats"].items() if v["is_identity"]}
+        cats = [k for k, v in fo["stats"].items() if not v["is_identity"]]
+
+        if cats:
+            lines += ["",
+                      f"  Category-like entity types: {', '.join(cats)}.",
+                      "  A handful of distinct values cover nearly every transaction, so",
+                      "  sharing one is not evidence of anything. Their fan-out is",
+                      "  excluded from the ring claim below — consider modelling them as",
+                      "  transaction features rather than node types."]
+
+        lines += ["",
+                  "  NOTE: fan-out alone is NOT ring evidence. It measures how popular",
+                  "  an entity is, and the most popular values are common browser",
+                  "  configurations. See fraud concentration below for the real signal.",
+                  ""]
+
+    con = res.get("concentration")
+    if con and con["entities"]:
+        lines.append("Fraud concentration — THE RING EVIDENCE")
+        lines.append(f"  Base fraud rate: {con['base_rate']:.2%}")
+        lines.append("  Entities whose transactions are disproportionately fraudulent:")
+        lines.append("  Ranked by Wilson 95% lower bound — demands a high rate AND")
+        lines.append("  enough transactions to believe it, so neither big buckets nor")
+        lines.append("  2-transaction flukes can top the list.")
+        lines.append(f"    {'entity':<8} {'txns':>6} {'fraud':>6} {'rate':>6} "
+                     f"{'lift':>6} {'LB':>6}  key")
+        best = None
+        for ent, rows in con["entities"].items():
+            for r in rows[:5]:
+                lines.append(f"    {ent:<8} {r['n_txns']:>6,} {r['n_fraud']:>6,} "
+                             f"{r['fraud_rate']:>5.0%} {r['lift']:>5.0f}x "
+                             f"{r['wilson_lb']:>5.0%}  {r['node_id'][:52]}")
+                if best is None or r["wilson_lb"] > best[1]["wilson_lb"]:
+                    best = (ent, r)
+        if best:
+            ent, r = best
+            lines += ["",
+                      f"  >> Headline: one {ent} carries {r['n_txns']} transactions, "
+                      f"{r['n_fraud']} of them",
+                      f"     fraudulent — {r['fraud_rate']:.0%} against a "
+                      f"{con['base_rate']:.1%} base rate ({r['lift']:.0f}x lift, "
+                      f"95% LB {r['wilson_lb']:.0%}).",
+                      "     Each of those transactions looks ordinary alone. The",
+                      "     concentration is only visible in the graph.", ""]
 
     dg = res.get("degree")
     if dg:

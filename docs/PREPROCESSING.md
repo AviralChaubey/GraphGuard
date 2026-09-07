@@ -41,9 +41,105 @@ amounts are heavy-tailed.
 ```
 Transaction --used_card-->    Card     (card1|card2|card3|card5|card4|card6)
 Transaction --used_device-->  Device   (DeviceInfo|DeviceType|id_30|id_31)
-Transaction --used_address--> Address  (addr1|addr2)
-Transaction --used_email-->   Email    (P_emaildomain)
 ```
+
+### Identity vs. category — why only two node types
+
+We originally also modelled `addr1|addr2` and `P_emaildomain` as node types.
+The EDA killed that. Measured on 200k transactions:
+
+| entity | distinct | median fan-out | max fan-out | distinct/edges |
+|---|---|---|---|---|
+| card | 10,121 | 3 | 4,374 | 0.051 |
+| device | 2,929 | 2 | 4,839 | 0.043 |
+| address | 327 | 2 | 17,178 | **0.002** |
+| email | 59 | 113 | 74,699 | **0.0004** |
+
+An entity type earns a node type when many distinct values exist relative to
+the transactions they touch — that is what makes sharing one *meaningful*.
+`P_emaildomain` has 59 distinct values covering 84% of transactions: modelling
+it as a node puts almost every transaction two hops from every other one, so
+message passing carries no information. And "these accounts share gmail.com"
+is not evidence of collusion. `addr1` is a region code, not a street address —
+same problem.
+
+Both are kept as **frequency-encoded transaction features** instead, so no
+signal is lost, only the false adjacency. Frequency encoding, not target
+encoding: target encoding leaks the label into the features and inflates every
+metric.
+
+`src/data/eda.py` computes this ratio automatically and warns when an entity
+type looks category-like, so the same mistake can't be made silently with a
+new column.
+
+### What we tried, and why we abandoned it
+
+`device` passes the identity test (2,929 distinct values over 68k edges), yet
+naming its largest hubs showed:
+
+```
+device  4,839  Windows|desktop|Windows 10|chrome 63.0
+device  4,314  Windows|desktop|?|chrome 63.0
+device  3,038  Windows|desktop|Windows 7|chrome 63.0
+```
+
+That is a **browser configuration, not a device**. In 2017 "Windows 10 +
+Chrome 63" was the most common desktop setup in the world. Keeping that edge
+tells the model 4,839 strangers are connected — the opposite of the signal we
+want, and it would have been our headline ring.
+
+We first tried capping fan-out at 500, on the theory that an entity shared by
+hundreds of transactions is a population rather than a ring. **It didn't
+work.** The fan-out distribution is continuous, so the threshold only truncated
+the tail: at a cap of 500 the largest surviving device was
+`?|mobile|?|mobile safari 10.0` with 493 transactions — the same kind of thing,
+one row lower. And the cap discarded 39% of card edges and 62% of device edges
+for an arbitrary number.
+
+The honest conclusion: **IEEE-CIS contains no device fingerprint.**
+`DeviceInfo` is an OS/browser string and no threshold turns it into an
+identity. The cap remains available as `max_entity_fanout` for ablations, but
+is off by default. We keep all edges and let GAT attention learn that an edge
+into a 4,000-transaction hub carries little information — which is what
+attention is *for*. Fan-out is also an entity feature, so the model sees
+hub-ness directly.
+
+Cards, by contrast, checked out: `9500|321.0|150.0|226.0|visa|debit` — every
+component present, a genuine key.
+
+### Fraud concentration — the actual ring evidence
+
+Fan-out measures **popularity**, and the most popular values are common browser
+configurations. What identifies a ring is **concentration**: an entity whose
+transactions are fraudulent far above the base rate.
+
+**Ranking this correctly took three attempts, and the first two were wrong:**
+
+| Rank by | What wins | Why it's wrong |
+|---|---|---|
+| fraud **count** | `Windows\|desktop\|?\|chrome 63.0` — 4,314 txns, 422 fraud (10%) | Rewards size. A big bucket with a slightly raised rate is not a ring. |
+| fraud **rate** | any entity with 2 transactions, both fraud (100%) | Rewards noise. No evidence behind it. |
+| **Wilson 95% lower bound** | 45 txns, 40 fraud (89%, LB 77%) | Demands a high rate *and* enough transactions to believe it. |
+
+The Wilson lower bound asks: *given this much evidence, what is the worst the
+true rate plausibly is?* A 4,314-transaction bucket at 10% has a lower bound of
+9%; a 45-transaction entity at 89% has 77%. The tight ring wins, which is the
+ordering the ring claim needs.
+
+`fraud_concentration()` reports, per entity type, the entities with the highest
+Wilson lower bound, along with rate and lift over base. The claim it produces —
+
+> *one card key carries 41 transactions, 32 of them fraudulent — 78% against a
+> 3.0% base rate, a 26x lift*
+
+— survives someone asking what that entity actually is. *"One device has 4,839
+transactions"* does not.
+
+**Lesson worth keeping, and worth saying in the review:** a statistical test
+said `device` was identity-like. Naming the top hubs revealed it wasn't. Then a
+threshold looked like a fix, and checking the result showed it had only moved
+the problem. The metric had to change, not the cutoff. Print your data at every
+step; summary statistics hide exactly the thing you are looking for.
 
 Two transactions on the same device are now 2 hops apart. **That 2-hop path is the ring signal** —
 one device fanning out to 40 cards is a ring, and a per-row model structurally cannot see it.
