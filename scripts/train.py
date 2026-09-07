@@ -60,11 +60,9 @@ def make_synthetic_dataset(n_nodes: int = 500, n_edges: int = 2000, n_feat: int 
 
 def load_real_or_synthetic(dataset_name: str, cfg: dict):
     try:
-        from src.data import load_dataset
-        from src.graph import to_pyg
+        from src.graph import load_pyg
 
-        bundle = load_dataset(dataset_name)
-        data = to_pyg(bundle)
+        data = load_pyg(dataset_name)
         logger.info("Loaded real dataset '%s' via A's pipeline.", dataset_name)
         return data
     except ImportError:
@@ -195,12 +193,15 @@ def main():
     if args.synthetic:
         data = make_synthetic_dataset()
         logger.info("Forced synthetic dataset via --synthetic flag.")
+   
     else:
-        data = load_real_or_synthetic(cfg["model"]["dataset"], cfg)
-
+        data = load_real_or_synthetic(cfg["data"]["dataset"], cfg)   
     checkpoint_dir = Path(cfg["checkpoints"]["dir"])
     train(cfg, data, checkpoint_dir)
-
+             
 
 if __name__ == "__main__":
     main()
+
+
+    
