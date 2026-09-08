@@ -1,0 +1,258 @@
+{
+  "fan_out": {
+    "stats": {
+      "card": {
+        "n_entities": 10121,
+        "max": 4374,
+        "median": 3.0,
+        "p99": 329.9999999999927,
+        "identity_ratio": 0.050605,
+        "is_identity": true,
+        "top_hubs": [
+          [
+            "card:9500|321.0|150.0|226.0|visa|debit",
+            4374
+          ],
+          [
+            "card:7919|194.0|150.0|202.0|mastercard|debit",
+            3971
+          ],
+          [
+            "card:15885|545.0|185.0|138.0|visa|debit",
+            3673
+          ],
+          [
+            "card:6019|583.0|150.0|226.0|visa|credit",
+            3375
+          ],
+          [
+            "card:17188|321.0|150.0|226.0|visa|debit",
+            3352
+          ]
+        ]
+      },
+      "device": {
+        "n_entities": 2929,
+        "max": 4839,
+        "median": 2.0,
+        "p99": 482.3599999999974,
+        "identity_ratio": 0.04282977758930791,
+        "is_identity": true,
+        "top_hubs": [
+          [
+            "device:Windows|desktop|Windows 10|chrome 63.0",
+            4839
+          ],
+          [
+            "device:Windows|desktop|?|chrome 63.0",
+            4314
+          ],
+          [
+            "device:Windows|desktop|Windows 7|chrome 63.0",
+            3038
+          ],
+          [
+            "device:iOS Device|mobile|iOS 11.1.2|mobile safari 11.0",
+            2989
+          ],
+          [
+            "device:iOS Device|mobile|iOS 11.2.1|mobile safari 11.0",
+            2901
+          ]
+        ]
+      }
+    }
+  },
+  "concentration": {
+    "base_rate": 0.03012,
+    "entities": {
+      "card": [
+        {
+          "node_id": "card:9499|555.0|150.0|226.0|visa|debit",
+          "n_txns": 11,
+          "n_fraud": 11,
+          "fraud_rate": 1.0,
+          "wilson_lb": 0.7411599827511859,
+          "lift": 33.200531208499335
+        },
+        {
+          "node_id": "card:5853|225.0|150.0|117.0|mastercard|debit",
+          "n_txns": 22,
+          "n_fraud": 20,
+          "fraud_rate": 0.9090909090909091,
+          "wilson_lb": 0.7218461934161421,
+          "lift": 30.182301098635758
+        },
+        {
+          "node_id": "card:12422|390.0|150.0|224.0|mastercard|debit",
+          "n_txns": 9,
+          "n_fraud": 9,
+          "fraud_rate": 1.0,
+          "wilson_lb": 0.7008472464490406,
+          "lift": 33.200531208499335
+        },
+        {
+          "node_id": "card:4693|417.0|150.0|195.0|visa|debit",
+          "n_txns": 29,
+          "n_fraud": 25,
+          "fraud_rate": 0.8620689655172413,
+          "wilson_lb": 0.6944064228730067,
+          "lift": 28.62114759353391
+        },
+        {
+          "node_id": "card:12023|216.0|150.0|224.0|mastercard|credit",
+          "n_txns": 14,
+          "n_fraud": 13,
+          "fraud_rate": 0.9285714285714286,
+          "wilson_lb": 0.6853073044604219,
+          "lift": 30.829064693606526
+        },
+        {
+          "node_id": "card:9375|536.0|150.0|226.0|visa|debit",
+          "n_txns": 26,
+          "n_fraud": 22,
+          "fraud_rate": 0.8461538461538461,
+          "wilson_lb": 0.6646841558168644,
+          "lift": 28.092757176422513
+        },
+        {
+          "node_id": "card:1394|399.0|150.0|185.0|american express|credit",
+          "n_txns": 7,
+          "n_fraud": 7,
+          "fraud_rate": 1.0,
+          "wilson_lb": 0.6456611570247934,
+          "lift": 33.200531208499335
+        },
+        {
+          "node_id": "card:11031|555.0|150.0|226.0|visa|credit",
+          "n_txns": 6,
+          "n_fraud": 6,
+          "fraud_rate": 1.0,
+          "wilson_lb": 0.6096569663469354,
+          "lift": 33.200531208499335
+        },
+        {
+          "node_id": "card:4078|514.0|150.0|195.0|mastercard|credit",
+          "n_txns": 6,
+          "n_fraud": 6,
+          "fraud_rate": 1.0,
+          "wilson_lb": 0.6096569663469354,
+          "lift": 33.200531208499335
+        },
+        {
+          "node_id": "card:11331|399.0|150.0|146.0|american express|credit",
+          "n_txns": 10,
+          "n_fraud": 9,
+          "fraud_rate": 0.9,
+          "wilson_lb": 0.5958436145024278,
+          "lift": 29.8804780876494
+        }
+      ],
+      "device": [
+        {
+          "node_id": "device:SM-A300H Build/LRX22G|mobile|?|chrome 63.0 for android",
+          "n_txns": 78,
+          "n_fraud": 75,
+          "fraud_rate": 0.9615384615384616,
+          "wilson_lb": 0.8929137832970124,
+          "lift": 31.92358770048013
+        },
+        {
+          "node_id": "device:Blade L3 Build/KOT49H|mobile|?|chrome 61.0 for android",
+          "n_txns": 12,
+          "n_fraud": 12,
+          "fraud_rate": 1.0,
+          "wilson_lb": 0.7574992425007574,
+          "lift": 33.200531208499335
+        },
+        {
+          "node_id": "device:SM-N920A Build/MMB29K|mobile|?|chrome 61.0 for android",
+          "n_txns": 11,
+          "n_fraud": 11,
+          "fraud_rate": 1.0,
+          "wilson_lb": 0.7411599827511859,
+          "lift": 33.200531208499335
+        },
+        {
+          "node_id": "device:E6603 Build/32.4.A.1.54|mobile|?|chrome 58.0 for android",
+          "n_txns": 11,
+          "n_fraud": 11,
+          "fraud_rate": 1.0,
+          "wilson_lb": 0.7411599827511859,
+          "lift": 33.200531208499335
+        },
+        {
+          "node_id": "device:NOKIA|mobile|?|edge",
+          "n_txns": 10,
+          "n_fraud": 10,
+          "fraud_rate": 1.0,
+          "wilson_lb": 0.7224598312333834,
+          "lift": 33.200531208499335
+        },
+        {
+          "node_id": "device:SM-J730GM Build/NRD90M|mobile|?|chrome 58.0 for android",
+          "n_txns": 10,
+          "n_fraud": 10,
+          "fraud_rate": 1.0,
+          "wilson_lb": 0.7224598312333834,
+          "lift": 33.200531208499335
+        },
+        {
+          "node_id": "device:SM-G530H Build/KTU84P|mobile|?|chrome 49.0 for android",
+          "n_txns": 10,
+          "n_fraud": 10,
+          "fraud_rate": 1.0,
+          "wilson_lb": 0.7224598312333834,
+          "lift": 33.200531208499335
+        },
+        {
+          "node_id": "device:Moto Z2 Play Build/NPSS26.118-19-11|mobile|?|chrome 63.0 for android",
+          "n_txns": 10,
+          "n_fraud": 10,
+          "fraud_rate": 1.0,
+          "wilson_lb": 0.7224598312333834,
+          "lift": 33.200531208499335
+        },
+        {
+          "node_id": "device:5015A Build/LMY47I|mobile|?|chrome 63.0 for android",
+          "n_txns": 9,
+          "n_fraud": 9,
+          "fraud_rate": 1.0,
+          "wilson_lb": 0.7008472464490406,
+          "lift": 33.200531208499335
+        },
+        {
+          "node_id": "device:LG-D680 Build/KOT49I|mobile|?|chrome 62.0 for android",
+          "n_txns": 14,
+          "n_fraud": 13,
+          "fraud_rate": 0.9285714285714286,
+          "wilson_lb": 0.6853073044604219,
+          "lift": 30.829064693606526
+        }
+      ]
+    }
+  },
+  "fraud_over_time": {
+    "overall_rate": 0.03012,
+    "cutoff": 33.0
+  },
+  "label_coverage": {
+    "rows": {
+      "transaction": {
+        "fraud": 6024,
+        "licit": 193976,
+        "unknown": 0
+      },
+      "card": {
+        "fraud": 0,
+        "licit": 0,
+        "unknown": 10121
+      },
+      "device": {
+        "fraud": 0,
+        "licit": 0,
+        "unknown": 2929
+      }
+    }
+  }
+}

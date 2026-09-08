@@ -10,15 +10,15 @@ pyarrow
 torch
 torch-geometric
 
-# graph db
+# databases
 neo4j
 
-# api
+# api and dashboard
 fastapi
 uvicorn[standard]
 pydantic
 
-# viz / utils
+# viz and utils
 matplotlib
 seaborn
 tqdm
@@ -27,3 +27,4 @@ python-dotenv
 
 # testing
 pytest
+httpx

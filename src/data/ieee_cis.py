@@ -25,13 +25,50 @@ from src.utils.config import get_logger, raw_dir
 
 log = get_logger(__name__)
 
-# raw column -> entity node type. Values are concatenated to form the entity key.
+# Raw columns -> entity node type. Values are concatenated to form the key.
+#
+# ONLY IDENTITY-LIKE COLUMNS BELONG HERE. An entity type earns a node type when
+# many distinct values exist relative to the transactions they touch — a card,
+# a device. Columns where a handful of values cover nearly everything are
+# CATEGORIES, not identities, and modelling them as nodes is actively harmful:
+#
+#   P_emaildomain — 59 distinct values over 168k edges. 84% of transactions
+#   would connect through them, putting almost every transaction 2 hops from
+#   every other one. Message passing then carries no information, and
+#   "these accounts share gmail.com" is not evidence of collusion.
+#
+#   addr1/addr2 — 327 distinct values; these are region codes, not street
+#   addresses. Same problem.
+#
+# Both are kept as transaction FEATURES instead (frequency-encoded below), so
+# no signal is lost — only the false adjacency is.
 ENTITY_SPEC = {
-    "card":    ["card1", "card2", "card3", "card5", "card4", "card6"],
-    "device":  ["DeviceInfo", "DeviceType", "id_30", "id_31"],
-    "address": ["addr1", "addr2"],
-    "email":   ["P_emaildomain"],
+    "card":   ["card1", "card2", "card3", "card5", "card4", "card6"],
+    "device": ["DeviceInfo", "DeviceType", "id_30", "id_31"],
 }
+
+# Category columns: informative as features, harmful as nodes.
+CATEGORY_COLS = ["addr1", "addr2", "P_emaildomain", "R_emaildomain", "ProductCD"]
+
+# Optional cap on entity fan-out. DEFAULT OFF — see below.
+#
+# We tried capping at 500 to remove non-identifying hubs like
+# "Windows|desktop|Windows 10|chrome 63.0" (4,839 transactions). It doesn't
+# work: the fan-out distribution is continuous, so any threshold just truncates
+# the tail. At a cap of 500 the largest surviving device was
+# "?|mobile|?|mobile safari 10.0" with 493 — the same kind of thing, one row
+# lower. Meanwhile the cap discarded 39% of card edges and 62% of device edges.
+#
+# The honest conclusion: IEEE-CIS has no device fingerprint. `DeviceInfo` is an
+# OS/browser string, and no threshold turns it into an identity.
+#
+# So we keep all edges and let the model decide. That is precisely what GAT
+# attention is for — learning that an edge into a 4,000-transaction hub carries
+# little information, rather than us hard-coding a guess. Fan-out is also
+# already an entity feature, so the model can see hub-ness directly.
+#
+# Set max_entity_fanout to an integer to enable the cap as an ablation.
+MAX_ENTITY_FANOUT = None
 
 # numeric transaction features we keep (the C/D/V blocks are huge; start small,
 # M2 can widen this later)
@@ -54,7 +91,8 @@ def _entity_key(df: pd.DataFrame, cols: list[str]) -> pd.Series:
     return key
 
 
-def load_ieee_cis(root=None, nrows: int | None = None) -> GraphBundle:
+def load_ieee_cis(root=None, nrows: int | None = None,
+                  max_entity_fanout: int | None = MAX_ENTITY_FANOUT) -> GraphBundle:
     root = raw_dir("ieee_cis") if root is None else root
     tx_path = next(iter(root.rglob("train_transaction.csv")), None)
     id_path = next(iter(root.rglob("train_identity.csv")), None)
@@ -89,8 +127,21 @@ def load_ieee_cis(root=None, nrows: int | None = None) -> GraphBundle:
         X["hour_of_day"] = (tx["TransactionDT"] / 3600) % 24
         X["day_of_week"] = (tx["TransactionDT"] / 86400) % 7
         X = X.drop(columns=["TransactionDT"])
+    # Category columns as FREQUENCY encoding: replace each value with how often
+    # it occurs. Deliberately not target/label encoding — that leaks the label
+    # into the features and inflates every metric. Frequency uses no labels at
+    # all, so it is leakage-free by construction.
+    for c in CATEGORY_COLS:
+        if c not in tx.columns:
+            continue
+        freq = tx[c].map(tx[c].value_counts(dropna=True))
+        X[f"{c}_freq"] = np.log1p(freq.fillna(0))
+        X[f"{c}_missing"] = tx[c].isna().astype(float)
+
     X = X.fillna(X.median(numeric_only=True)).fillna(0.0)
     b.features["transaction"] = X.to_numpy(dtype=np.float32)
+    log.info("transaction features: %d (%d numeric + %d category-derived)",
+             X.shape[1], len(num_cols), 2 * sum(c in tx.columns for c in CATEGORY_COLS))
 
     b.labels["transaction"] = tx["isFraud"].astype(int).to_numpy()
     # day index as the temporal split key
@@ -104,14 +155,39 @@ def load_ieee_cis(root=None, nrows: int | None = None) -> GraphBundle:
             log.warning("entity '%s': no usable values, skipping", ent)
             continue
         codes, uniques = pd.factorize(key[mask])
+        rows = np.flatnonzero(mask)
+
+        # Drop non-identifying hubs before they become nodes.
+        fanout = np.bincount(codes, minlength=len(uniques))
+        keep_ent = (fanout <= max_entity_fanout if max_entity_fanout
+                    else np.ones(len(uniques), dtype=bool))
+        if not keep_ent.all():
+            dropped = np.flatnonzero(~keep_ent)
+            biggest = uniques[dropped[np.argsort(-fanout[dropped])][:3]]
+            log.warning(
+                "entity '%s': dropping %d non-identifying hub(s) with fan-out > %d "
+                "(%d of %d edges). Largest: %s",
+                ent, len(dropped), max_entity_fanout,
+                int(fanout[~keep_ent].sum()), len(codes),
+                ", ".join(str(x)[:48] for x in biggest))
+            keep_edge = keep_ent[codes]
+            codes, rows = codes[keep_edge], rows[keep_edge]
+            # re-index the surviving entities to stay contiguous
+            remap = np.full(len(uniques), -1, dtype=int)
+            remap[np.flatnonzero(keep_ent)] = np.arange(int(keep_ent.sum()))
+            codes = remap[codes]
+            uniques = uniques[keep_ent]
+            if len(uniques) == 0:
+                log.warning("entity '%s': nothing left after the cap, skipping", ent)
+                continue
 
         b.nodes[ent] = pd.DataFrame({"node_id": [f"{ent}:{u}" for u in uniques]})
-        edges = pd.DataFrame({"src": np.flatnonzero(mask), "dst": codes})
+        edges = pd.DataFrame({"src": rows, "dst": codes})
         b.edges[("transaction", f"used_{ent}", ent)] = edges
 
         # entity features: how many transactions it touches, and their amounts.
         # fan-out is exactly the ring signal, so it must be a feature.
-        amt = tx.loc[mask, "TransactionAmt"].to_numpy()
+        amt = tx["TransactionAmt"].to_numpy()[rows]
         g = pd.DataFrame({"e": codes, "amt": amt}).groupby("e")["amt"]
         feat = pd.DataFrame({
             "n_txn": g.size(),
