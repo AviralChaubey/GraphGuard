@@ -21,7 +21,6 @@ def toy_bundle() -> GraphBundle:
     p = 1 / (1 + np.exp(-(1.5 * X[:, 0] - 1.0 * X[:, 1] - 2.0)))
     y = (rng.random(n) < p).astype(int)
     y[rng.random(n) < 0.2] = -1                      # unknowns
-
     b = GraphBundle(name="toy", target_node_type="account")
     b.nodes["account"] = pd.DataFrame({"node_id": [f"a{i}" for i in range(n)]})
     b.edges[("account", "sent_to", "account")] = pd.DataFrame(
@@ -36,13 +35,11 @@ def toy_bundle() -> GraphBundle:
 def hetero_bundle(tmp_path) -> GraphBundle:
     """IEEE-CIS-shaped bundle containing a planted ring: one device on many cards."""
     from src.data.ieee_cis import load_ieee_cis
-
     rng = np.random.default_rng(1)
     n = 900
     dev = list(rng.choice([f"D{i}" for i in range(60)], n))
     for i in range(80):
         dev[i] = "RING_DEVICE"                       # the planted ring
-
     pd.DataFrame({
         "TransactionID": np.arange(n),
         "isFraud": rng.binomial(1, 0.04, n),
