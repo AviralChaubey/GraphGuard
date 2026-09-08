@@ -1,95 +1,77 @@
-import pytest
+"""Tests for DummyModel. Runs on a tiny synthetic graph -- no dataset download needed.
 
-torch = pytest.importorskip("torch")
-torch_geometric = pytest.importorskip("torch_geometric")
-
+Per CONTRACTS.md: assert output shapes and value ranges, not accuracy (there's no accuracy
+to test -- the outputs are random by design).
+"""
+import torch
 from torch_geometric.data import Data
 
-from src._stubs.dummy_model import DummyModel
+from src.models.dummy import DummyModel
 
 
-def _small_graph(seed=0):
-    g = torch.Generator().manual_seed(seed)
-    x = torch.randn(4, 6, generator=g)
-    edge_index = torch.tensor([[0, 1, 2, 1, 3, 0], [1, 0, 1, 2, 0, 3]])
-    return Data(x=x, edge_index=edge_index)
+def make_synthetic_graph(n_nodes: int = 10, n_edges: int = 20) -> Data:
+    """A small random graph shaped like what to_pyg() would hand B: node features,
+    an edge_index, and num_nodes -- nothing dataset-specific."""
+    x = torch.randn(n_nodes, 16)
+    edge_index = torch.randint(0, n_nodes, (2, n_edges))
+    return Data(x=x, edge_index=edge_index, num_nodes=n_nodes)
 
 
-def test_forward_is_deterministic_across_repeated_calls():
-    model = DummyModel(in_dim=6, seed=0)
-    model.eval()
-    data = _small_graph()
-
-    with torch.no_grad():
-        out1 = model(data)
-        out2 = model(data)
-
-    assert torch.equal(out1["fraud_score"], out2["fraud_score"])
-    assert torch.equal(out1["anomaly_score"], out2["anomaly_score"])
-    assert torch.equal(out1["embeddings"], out2["embeddings"])
+def test_output_keys_present():
+    model = DummyModel(hidden_dim=32)
+    data = make_synthetic_graph()
+    out = model(data)
+    assert set(out.keys()) == {"fraud_score", "anomaly_score", "embeddings", "attention"}
 
 
-def test_two_instances_with_same_seed_agree():
-    data = _small_graph()
-    m1 = DummyModel(in_dim=6, seed=0)
-    m2 = DummyModel(in_dim=6, seed=0)
-    m1.eval(); m2.eval()
+def test_output_shapes():
+    n_nodes, n_edges, hidden_dim = 10, 20, 32
+    model = DummyModel(hidden_dim=hidden_dim)
+    data = make_synthetic_graph(n_nodes, n_edges)
+    out = model(data)
 
-    with torch.no_grad():
-        assert torch.equal(m1(data)["fraud_score"], m2(data)["fraud_score"])
-
-
-def test_output_depends_on_node_features():
-    model = DummyModel(in_dim=6, seed=0)
-    model.eval()
-    data = _small_graph()
-    perturbed = Data(x=data.x + 1.0, edge_index=data.edge_index)
-
-    with torch.no_grad():
-        original = model(data)["fraud_score"]
-        changed = model(perturbed)["fraud_score"]
-
-    assert not torch.allclose(original, changed)
+    assert out["fraud_score"].shape == (n_nodes,)
+    assert out["anomaly_score"].shape == (n_nodes,)
+    assert out["embeddings"].shape == (n_nodes, hidden_dim)
+    if out["attention"] is not None:
+        assert out["attention"].shape == (n_edges,)
 
 
-def test_output_depends_on_graph_connectivity():
-    model = DummyModel(in_dim=6, seed=0)
-    model.eval()
-    data = _small_graph()
-    # drop the last edge pair (3,0)/(0,3)
-    fewer_edges = Data(x=data.x, edge_index=data.edge_index[:, :4])
-
-    with torch.no_grad():
-        original = model(data)["fraud_score"]
-        changed = model(fewer_edges)["fraud_score"]
-
-    assert not torch.allclose(original, changed)
+def test_fraud_score_in_unit_range():
+    model = DummyModel()
+    data = make_synthetic_graph()
+    out = model(data)
+    assert torch.all(out["fraud_score"] >= 0.0)
+    assert torch.all(out["fraud_score"] <= 1.0)
 
 
-def test_shapes_and_ranges_match_contract_2():
-    model = DummyModel(in_dim=6, seed=0)
-    model.eval()
-    data = _small_graph()
+def test_anomaly_score_non_negative():
+    model = DummyModel()
+    data = make_synthetic_graph()
+    out = model(data)
+    assert torch.all(out["anomaly_score"] >= 0.0)
 
-    with torch.no_grad():
-        out = model(data)
 
-    n, n_edges = data.x.size(0), data.edge_index.size(1)
-    assert out["fraud_score"].shape == (n,)
-    assert torch.all((out["fraud_score"] >= 0) & (out["fraud_score"] <= 1))
-    assert out["anomaly_score"].shape == (n,)
-    assert torch.all(out["anomaly_score"] >= 0)
-    assert out["embeddings"].shape == (n, model.hidden_dim)
+def test_attention_can_be_none_or_correct_shape():
+    """Attention is sometimes None by design -- consumers (C) must handle both branches.
+    Force always_return_attention to check the non-None shape deterministically."""
+    n_nodes, n_edges = 10, 20
+    model = DummyModel(always_return_attention=True)
+    data = make_synthetic_graph(n_nodes, n_edges)
+    out = model(data)
+    assert out["attention"] is not None
     assert out["attention"].shape == (n_edges,)
 
 
-def test_gradients_flow_to_input_features():
-    # GNNExplainer needs a non-trivial gradient landscape -- verify one exists at all.
-    model = DummyModel(in_dim=6, seed=0)
-    data = _small_graph()
-    x = data.x.clone().requires_grad_(True)
-    out = model(Data(x=x, edge_index=data.edge_index))
-    out["fraud_score"][0].backward()
+def test_load_returns_dummy_model():
+    model = DummyModel.load("nonexistent/checkpoint.pt")
+    assert isinstance(model, DummyModel)
 
-    assert x.grad is not None
-    assert torch.any(x.grad != 0)
+
+def test_zero_edges_does_not_crash():
+    """Edge case C might hit early: an isolated node with no edges yet."""
+    data = make_synthetic_graph(n_nodes=5, n_edges=0)
+    model = DummyModel()
+    out = model(data)
+    assert out["fraud_score"].shape == (5,)
+    assert out["attention"] is None or out["attention"].shape == (0,)
