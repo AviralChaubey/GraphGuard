@@ -1,3 +1,4 @@
+# GraphGuard combines graph representation learning with fraud-ring detection.
 """GraphSAGE -> GAT -> dual heads (fraud classifier + autoencoder).
 
 Contract (docs/CONTRACTS.md, Contract 2): forward() returns a dict with the exact same
