@@ -86,20 +86,51 @@ python scripts/preprocess.py --dataset elliptic
 python scripts/preprocess.py --dataset ieee_cis --nrows 50000   # smoke run
 ```
 
-Every loader returns a `GraphBundle` — the stable contract between M1 and M2.
+Every loader returns a `GraphBundle` — the stable contract between workstreams A and B.
 Details and the design decisions worth defending: **`docs/PREPROCESSING.md`**.
+
+## Analysis
+
+```bash
+python scripts/analyze.py --dataset ieee_cis --nrows 200000
+```
+
+Writes fan-out histograms, degree distribution, fraud-rate-over-time and label-coverage
+figures to `results/figures/`, plus a findings report to `results/metrics/`. The entity
+fan-out figure is the empirical evidence that rings exist in the data — produced before
+any model is trained.
+
+## Evaluation
+
+```bash
+python scripts/evaluate.py --dataset elliptic --baselines   # runs today, no model needed
+python scripts/evaluate.py --dataset elliptic --leakage     # temporal vs random split
+```
+
+PR-AUC is the headline metric, not accuracy. Metric choices, the two-tier baseline design
+and how to read the leakage result: **`docs/EVALUATION.md`**.
+
+## Tests
+
+```bash
+pytest tests/ -q          # or: python run_tests.py   (no pytest required)
+```
+
+Everything runs on synthetic fixtures — no dataset download, no trained checkpoint.
 
 ---
 
 ## Team & module ownership
 
-| Module | Owner | Scope |
+| Workstream | Owner | Scope |
 |---|---|---|
-| M1 · Data & graph builder | _TBD_ | `src/data/`, `src/graph/` |
-| M2 · GNN core | _TBD_ | `src/models/` |
-| M3 · Ring & anomaly | _TBD_ | `src/ring/` |
-| M4 · Explainability | _TBD_ | `src/explain/` |
-| M5 · API & dashboard | _TBD_ | `src/api/`, `dashboard/` |
+| **A** · Data & Graph | _TBD_ | `src/data/`, `src/graph/`, `notebooks/`, `scripts/preprocess.py` |
+| **B** · Model & Ring | _TBD_ | `src/models/`, `src/ring/`, `scripts/train.py`, `scripts/evaluate.py` |
+| **C** · Explainability, API & UI | _TBD_ | `src/explain/`, `src/api/`, `dashboard/` |
+
+**Nobody edits another workstream's folder.** Ask the owner instead — that one rule prevents
+almost every merge conflict. Interfaces between workstreams are frozen in
+[`docs/CONTRACTS.md`](docs/CONTRACTS.md); per-person onboarding briefs are in `docs/team/`.
 
 ---
 
