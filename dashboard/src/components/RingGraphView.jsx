@@ -47,17 +47,29 @@ export default function RingGraphView({ ring, evidenceNodeIds = [], evidenceEdge
         height={460}
         backgroundColor="rgba(0,0,0,0)"
         nodeRelSize={5}
-        nodeColor={(n) => (n.isEvidence ? "#f2545b" : n.type === "device" || n.type === "address" ? "#5b8dee" : "#7c8798")}
+        nodeColor={(n) =>
+          n.isEvidence
+            ? "#f2545b"
+            : n.type && n.type !== "unknown" && n.type !== "transaction" && n.type !== "account"
+            ? "#5b8dee"
+            : "#7c8798"
+        }
         nodeLabel={(n) => `${n.label}\nscore ${n.score.toFixed(2)}`}
         linkColor={(l) => (l.isEvidence ? "#f2545b" : "rgba(124,135,152,0.35)")}
         linkWidth={(l) => (l.isEvidence ? 2.5 : 1)}
         linkDirectionalArrowLength={0}
         cooldownTicks={80}
       />
+      {/* "device / address" and "account" used to be hardcoded here regardless of which
+          dataset was loaded -- correct for IEEE-CIS's card/device/account graph, but
+          meaningless for Elliptic (Bitcoin transactions) and misleading for PaySim. Elliptic
+          and PaySim are homogeneous (one node type), so every node there now renders as the
+          same "node" dot -- the labels below describe what the colors actually mean on any
+          dataset instead of assuming IEEE-CIS's node types. */}
       <div className="graph-legend">
-        <span><i className="dot dot--evidence" /> evidence</span>
-        <span><i className="dot dot--entity" /> device / address</span>
-        <span><i className="dot dot--account" /> account</span>
+        <span><i className="dot dot--evidence" /> evidence (flagged by explanation)</span>
+        <span><i className="dot dot--entity" /> shared entity (card / device / address)</span>
+        <span><i className="dot dot--account" /> node</span>
       </div>
     </div>
   );

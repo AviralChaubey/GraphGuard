@@ -5,7 +5,18 @@ import RingGraphView from "./components/RingGraphView.jsx";
 import ExplanationPanel from "./components/ExplanationPanel.jsx";
 
 // Seed queue -- see the note in AlertQueue.jsx about the missing "/rings" list endpoint.
-const KNOWN_RING_IDS = ["r_00042"];
+// "r_00042" was the only entry here, which only exists against the DummyModel's synthetic
+// stub ring -- it doesn't exist once a real checkpoint is loaded (GRAPHGUARD_CHECKPOINT set),
+// so the demo alert queue was empty/broken against real data. Replaced with real, high-score
+// ring ids pulled from the actual Elliptic checkpoint (results/checkpoints/elliptic/best.pt),
+// highest fraud score first, so the queue has something real to click through for a demo.
+const KNOWN_RING_IDS = [
+  "r_06942", // score 0.998, size 11
+  "r_06516", // score 0.997, size 10, chain
+  "r_00323", // score 0.996, size 24
+  "r_00132", // score 0.995, size 9, star
+  "r_05772", // score 0.995, size 15
+];
 
 export default function App() {
   const [selectedRingId, setSelectedRingId] = useState(KNOWN_RING_IDS[0]);

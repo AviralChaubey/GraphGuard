@@ -71,6 +71,7 @@ class AppState:
     # correct for a single-analyst tool; a production multi-user API would need a model
     # pool instead, out of scope here.
     lock: threading.Lock = field(default_factory=threading.Lock)
+    dataset: str = "unknown"  # which dataset this state was loaded from -- see _edge_relation()
 
 
 def _load_state() -> AppState:
@@ -95,7 +96,8 @@ def _load_state() -> AppState:
         "API running against DummyModel + a synthetic ring -- set GRAPHGUARD_CHECKPOINT to "
         "use a real trained model."
     )
-    return AppState(model=model, data=data, rings={ring.ring_id: ring}, explainer=explainer)
+    return AppState(model=model, data=data, rings={ring.ring_id: ring}, explainer=explainer,
+                    dataset="synthetic")
 
 
 def _load_real_state(checkpoint: str, dataset: Optional[str]) -> AppState:
@@ -130,7 +132,7 @@ def _load_real_state(checkpoint: str, dataset: Optional[str]) -> AppState:
     logger.info("Real model loaded: dataset=%s nodes=%d rings=%d", dataset, data.x.size(0), len(ring_list))
     return AppState(
         model=model, data=data, rings={r.ring_id: r for r in ring_list},
-        explainer=GNNExplainerWrapper(model),
+        explainer=GNNExplainerWrapper(model), dataset=dataset,
     )
 
 
@@ -180,8 +182,9 @@ def create_app() -> FastAPI:
             )
             for n in ring.node_ids
         ]
+        relation = _edge_relation(state.dataset)
         edges = [
-            RingEdge(src=s, dst=d, relation="used_device", weight=1.0)
+            RingEdge(src=s, dst=d, relation=relation, weight=1.0)
             for s, d in ring.edge_list
         ]
         return RingResponse(
@@ -339,6 +342,23 @@ def _node_id(state: AppState, idx: int) -> str:
 def _node_type(state: AppState, idx: int) -> str:
     types = getattr(state.data, "node_types", None)
     return types[idx] if types else "unknown"
+
+
+# "used_device" was hardcoded for every edge in every ring regardless of which dataset was
+# loaded -- harmless for IEEE-CIS (where that's often true) but wrong and misleading for
+# Elliptic/PaySim, which only ever have one edge relation and it isn't that one. Elliptic and
+# PaySim are homogeneous (single node/edge type), so this is cosmetic -- the ring's actual
+# structure/score/explanation are unaffected either way -- but a dashboard showing "used_device"
+# under a Bitcoin transaction graph reads as a bug to anyone reviewing it.
+_RELATION_BY_DATASET = {
+    "elliptic": "sent_to",
+    "paysim": "sent_to",
+    "ieee_cis": "used_entity",
+}
+
+
+def _edge_relation(dataset: str) -> str:
+    return _RELATION_BY_DATASET.get(dataset, "connected_to")
 
 
 def _build_reason_context(state: AppState, evidence) -> ReasonContext:
