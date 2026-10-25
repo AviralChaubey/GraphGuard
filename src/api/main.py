@@ -18,7 +18,8 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+import threading
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Dict, Optional
 
@@ -55,6 +56,21 @@ class AppState:
     data: object                 # torch_geometric.data.Data
     rings: Dict[str, object]     # ring_id -> Ring
     explainer: GNNExplainerWrapper
+    # GNNExplainer (via PyG's Explainer/set_masks) temporarily mutates `model`'s conv
+    # layers in place -- it flips each MessagePassing submodule's `.explain` flag to True
+    # and attaches an edge_mask sized to whatever subgraph it's currently explaining, for
+    # the whole optimisation run (seconds, not milliseconds). `model` is one shared Python
+    # object across every request, and FastAPI runs sync endpoint functions in a thread
+    # pool, so a /score or /ring request landing on a worker thread *while* /explain is
+    # mid-run on another thread calls that same model with `.explain` still True and an
+    # edge_mask sized for the explainer's small subgraph -- PyG's message_passing.py then
+    # asserts `inputs.size(self.node_dim) == edge_mask.size(0)` against the full graph's
+    # edge count and crashes with a 500. Reproduced live: clicking a ring in the dashboard
+    # fires /ring and /explain close together and hit exactly this. One lock around every
+    # endpoint that touches `model` or `explainer` serializes them so this can't happen --
+    # correct for a single-analyst tool; a production multi-user API would need a model
+    # pool instead, out of scope here.
+    lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 def _load_state() -> AppState:
@@ -136,7 +152,7 @@ def create_app() -> FastAPI:
     def score(node_idx: int) -> ScoreResponse:
         state: AppState = app.state.gg
         _validate_scoreable_node(state, node_idx)
-        with torch.no_grad():
+        with state.lock, torch.no_grad():
             out = state.model(state.data)
         node_id = _node_id(state, node_idx)
         return ScoreResponse(
@@ -152,7 +168,7 @@ def create_app() -> FastAPI:
         if ring is None:
             raise HTTPException(status_code=404, detail=f"unknown ring_id '{ring_id}'")
 
-        with torch.no_grad():
+        with state.lock, torch.no_grad():
             scores = state.model(state.data)["fraud_score"]
 
         nodes = [
@@ -177,63 +193,68 @@ def create_app() -> FastAPI:
     def explain(target_id: str) -> ExplainResponse:
         state: AppState = app.state.gg
 
-        if target_id in state.rings:
-            ring = state.rings[target_id]
-            explainer_out = state.explainer.explain_ring(state.data, ring)
-        else:
-            try:
-                node_idx = int(target_id)
-            except ValueError:
-                raise HTTPException(
-                    status_code=404, detail=f"'{target_id}' is not a known ring_id or node index"
-                )
-            _validate_scoreable_node(state, node_idx)
-            explainer_out = state.explainer.explain(state.data, node_idx)
+        # Locked for the whole handler, not just the explainer call: predict_fn below
+        # (used by compute_fidelity) also calls state.model directly, and that must not
+        # interleave with the explainer's own in-place mutation of the same model either.
+        # See the comment on AppState.lock for why this is needed at all.
+        with state.lock:
+            if target_id in state.rings:
+                ring = state.rings[target_id]
+                explainer_out = state.explainer.explain_ring(state.data, ring)
+            else:
+                try:
+                    node_idx = int(target_id)
+                except ValueError:
+                    raise HTTPException(
+                        status_code=404, detail=f"'{target_id}' is not a known ring_id or node index"
+                    )
+                _validate_scoreable_node(state, node_idx)
+                explainer_out = state.explainer.explain(state.data, node_idx)
 
-        evidence = build_evidence_subgraph(
-            edge_index=state.data.edge_index.numpy(),
-            edge_mask=explainer_out.edge_mask,
-            target_idx=explainer_out.target_idx,
-            node_feature_mask=explainer_out.node_feature_mask,
-        )
+            evidence = build_evidence_subgraph(
+                edge_index=state.data.edge_index.numpy(),
+                edge_mask=explainer_out.edge_mask,
+                target_idx=explainer_out.target_idx,
+                node_feature_mask=explainer_out.node_feature_mask,
+            )
 
-        full_edge_attr = getattr(state.data, "edge_attr", None)
-        n_full_edges = state.data.edge_index.shape[1]
+            full_edge_attr = getattr(state.data, "edge_attr", None)
+            n_full_edges = state.data.edge_index.shape[1]
 
-        def predict_fn(edge_index: np.ndarray) -> float:
-            """Rerun the model with only `edge_index`'s edges present, for fidelity.
+            def predict_fn(edge_index: np.ndarray) -> float:
+                """Rerun the model with only `edge_index`'s edges present, for fidelity.
 
-            `metrics.fidelity()` calls this exactly twice: once with the full graph's
-            edge_index (unchanged), once with the evidence-only edge_index it builds from
-            `evidence.edges`. We tell those two calls apart by edge count so that if the
-            real model needs `edge_attr` (Contract 2 doesn't rule this out -- see the
-            edge_attr passthrough in `_ModelAdapter`), the evidence-only call gets the
-            correctly-sliced rows rather than dropping edge_attr and silently changing what
-            the model sees.
-            """
-            ei = torch.as_tensor(edge_index, dtype=torch.long)
-            edge_attr = None
-            if full_edge_attr is not None:
-                if ei.shape[1] == n_full_edges:
-                    edge_attr = full_edge_attr
-                else:
-                    edge_attr = full_edge_attr[evidence.edge_ids]
+                `metrics.fidelity()` calls this exactly twice: once with the full graph's
+                edge_index (unchanged), once with the evidence-only edge_index it builds from
+                `evidence.edges`. We tell those two calls apart by edge count so that if the
+                real model needs `edge_attr` (Contract 2 doesn't rule this out -- see the
+                edge_attr passthrough in `_ModelAdapter`), the evidence-only call gets the
+                correctly-sliced rows rather than dropping edge_attr and silently changing what
+                the model sees.
+                """
+                ei = torch.as_tensor(edge_index, dtype=torch.long)
+                edge_attr = None
+                if full_edge_attr is not None:
+                    if ei.shape[1] == n_full_edges:
+                        edge_attr = full_edge_attr
+                    else:
+                        edge_attr = full_edge_attr[evidence.edge_ids]
 
-            data_kwargs = {"x": state.data.x, "edge_index": ei}
-            if edge_attr is not None:
-                data_kwargs["edge_attr"] = edge_attr
-            probe_data = type(state.data)(**data_kwargs)
+                data_kwargs = {"x": state.data.x, "edge_index": ei}
+                if edge_attr is not None:
+                    data_kwargs["edge_attr"] = edge_attr
+                probe_data = type(state.data)(**data_kwargs)
 
-            with torch.no_grad():
-                return float(state.model(probe_data)["fraud_score"][explainer_out.target_idx])
+                with torch.no_grad():
+                    return float(state.model(probe_data)["fraud_score"][explainer_out.target_idx])
 
-        fid = compute_fidelity(
-            predict_fn, state.data.edge_index.numpy(), evidence.edges
-        ).fidelity
-        spars = compute_sparsity(len(evidence.edges), state.data.edge_index.shape[1])
+            fid = compute_fidelity(
+                predict_fn, state.data.edge_index.numpy(), evidence.edges
+            ).fidelity
+            spars = compute_sparsity(len(evidence.edges), state.data.edge_index.shape[1])
 
-        reason_ctx = _build_reason_context(state, evidence)
-        reason = generate_reason(evidence, reason_ctx)
+            reason_ctx = _build_reason_context(state, evidence)
+            reason = generate_reason(evidence, reason_ctx)
 
         return ExplainResponse(
             target_id=target_id,
