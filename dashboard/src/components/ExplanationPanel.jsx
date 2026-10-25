@@ -31,6 +31,12 @@ export default function ExplanationPanel({ explanation, loading, error, ringId, 
           {explanation.top_features.length > 0 && (
             <>
               <div className="subheader">Top contributing features</div>
+              <p className="muted feature-list__caption">
+                Shown as feature index (e.g. "f89"), not a real name — Elliptic's public
+                dataset never published what each of its 165 features actually measures, so
+                no name exists to show here. This is a limitation of the published dataset
+                itself, not something missing from the explanation.
+              </p>
               <ul className="feature-list">
                 {explanation.top_features.map((f) => (
                   <li key={f.name}>

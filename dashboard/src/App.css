@@ -202,6 +202,7 @@ body {
 }
 .metric-list dd { margin: 0; font-size: 18px; font-weight: 600; font-family: var(--font-mono); }
 
+.feature-list__caption { font-size: 11.5px; line-height: 1.5; margin: 0 0 10px; }
 .feature-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
 .feature-list li { display: grid; grid-template-columns: 90px 1fr 40px; align-items: center; gap: 10px; }
 .feature-list li span:first-child { font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); }
