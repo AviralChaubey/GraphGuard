@@ -16,6 +16,7 @@ async function request(path, options) {
 
 export const api = {
   health: () => request("/health"),
+  listRings: (limit = 20) => request(`/rings?limit=${limit}`),
   getRing: (ringId) => request(`/ring/${encodeURIComponent(ringId)}`),
   getExplanation: (targetId) => request(`/explain/${encodeURIComponent(targetId)}`),
   sendFeedback: (ringId, verdict, note) =>

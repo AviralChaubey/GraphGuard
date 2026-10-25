@@ -41,6 +41,8 @@ from src.api.schemas import (
     RingEdge,
     RingNode,
     RingResponse,
+    RingSummary,
+    RingsResponse,
     ScoreResponse,
     TopFeature,
 )
@@ -149,6 +151,29 @@ def create_app() -> FastAPI:
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:
         return HealthResponse(status="ok", model_loaded=app.state.gg.model is not None)
+
+    @app.get("/rings", response_model=RingsResponse)
+    def list_rings(limit: int = 20) -> RingsResponse:
+        """Which ring_ids actually exist on THIS running server, highest score first.
+
+        Added because the dashboard had no way to discover real ring_ids and was relying on a
+        hardcoded list -- which isn't safe to share across machines, since ring extraction's
+        floating-point scores (and therefore which nodes cross the threshold, and therefore
+        which Louvain communities form) are not guaranteed bit-identical across different
+        OS/PyTorch builds. A hardcoded id computed on one machine can be genuinely absent on
+        another, even with the same checkpoint and the same code -- that's not a bug, it's an
+        inherent floating-point portability gap, which is exactly why this endpoint exists:
+        always ask the server you're actually talking to, never assume.
+        """
+        state: AppState = app.state.gg
+        ranked = sorted(state.rings.values(), key=lambda r: -r.score)[:limit]
+        return RingsResponse(
+            rings=[
+                RingSummary(ring_id=r.ring_id, score=r.score, size=r.size, pattern=r.pattern)
+                for r in ranked
+            ],
+            total=len(state.rings),
+        )
 
     @app.get("/score/{node_idx}", response_model=ScoreResponse)
     def score(node_idx: int) -> ScoreResponse:

@@ -3,12 +3,12 @@ import React, { useState } from "react";
 /**
  * Left-hand queue of ring alerts to triage.
  *
- * NOTE: the frozen API contract (docs/CONTRACTS.md) has no "list all rings" endpoint yet --
- * only GET /ring/{id}. Until the team adds one, this queue is seeded with known ids and lets
- * the analyst jump to any ring_id directly. Raise a `/rings` list endpoint with the team if
- * the real alert volume needs paging.
+ * `ringIds` comes from GET /rings (App.jsx), so this always reflects whichever rings actually
+ * exist on the server it's talking to right now, highest score first. The "jump to ring_id"
+ * box below still lets an analyst open any ring directly by id, e.g. one from outside the
+ * top-20 /rings returns by default.
  */
-export default function AlertQueue({ ringIds, selectedRingId, onSelect }) {
+export default function AlertQueue({ ringIds, selectedRingId, onSelect, queueError }) {
   const [draft, setDraft] = useState("");
 
   function submitDraft(e) {
@@ -22,6 +22,7 @@ export default function AlertQueue({ ringIds, selectedRingId, onSelect }) {
   return (
     <div className="panel alert-queue">
       <div className="panel-header">Alert Queue</div>
+      {queueError && <p className="error alert-queue__error">{queueError}</p>}
       <ul className="alert-list">
         {ringIds.map((id) => (
           <li key={id}>

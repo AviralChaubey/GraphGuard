@@ -69,3 +69,22 @@ class FeedbackAck(BaseModel):
 class HealthResponse(BaseModel):
     status: Literal["ok"]
     model_loaded: bool
+
+
+class RingSummary(BaseModel):
+    """One row of GET /rings -- enough to populate an alert queue without fetching every
+    ring's full node/edge list. Added because the dashboard previously had no way to discover
+    which ring_ids actually exist on a given running server (see the note in
+    AlertQueue.jsx) and was relying on a hardcoded list computed elsewhere -- which breaks the
+    moment ring extraction produces even slightly different scores (different machine, OS,
+    PyTorch build -- floating point is not guaranteed bit-identical across those), because the
+    hardcoded ids may not exist in THIS server's actual rings."""
+    ring_id: str
+    score: float
+    size: int
+    pattern: str
+
+
+class RingsResponse(BaseModel):
+    rings: List[RingSummary]
+    total: int

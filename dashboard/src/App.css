@@ -122,6 +122,8 @@ body {
 }
 .alert-item__hint { color: var(--text-muted); font-family: var(--font-ui); font-size: 11px; }
 
+.alert-queue__error { font-size: 12px; line-height: 1.4; margin: 0 0 12px; }
+
 .alert-queue__jump { display: flex; gap: 6px; margin-top: 18px; }
 .alert-queue__jump input {
   flex: 1;
