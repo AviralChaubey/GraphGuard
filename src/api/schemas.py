@@ -83,8 +83,19 @@ class RingSummary(BaseModel):
     score: float
     size: int
     pattern: str
+    time_step: Optional[int] = None
+    """Elliptic/PaySim only: the latest time-step among this ring's member transactions
+    (the same time-step index used for the train/test temporal split). Lets the dashboard
+    filter "show me rings up to time X" without pretending there's a real calendar date --
+    these datasets never published one, only an abstract step ordering. None when the
+    underlying model/dataset has no time array (e.g. the DummyModel stub, or IEEE-CIS)."""
 
 
 class RingsResponse(BaseModel):
     rings: List[RingSummary]
     total: int
+    max_time_step: Optional[int] = None
+    """Highest time_step value that exists anywhere in the currently loaded graph (not just
+    among the returned/filtered rings) -- the dashboard uses this as the upper bound for its
+    "up to time step" input, so the box always reflects the real range for whatever server
+    it's talking to, regardless of any before_time_step filter already applied."""

@@ -12,28 +12,42 @@ import ExplanationPanel from "./components/ExplanationPanel.jsx";
 // code. The actual queue is populated from GET /rings below, which asks the server you're
 // talking to right now what really exists there -- always prefer that over any hardcoded list.
 const FALLBACK_RING_IDS = ["r_00042"];
+const FALLBACK_ROWS = FALLBACK_RING_IDS.map((id) => ({ ring_id: id, time_step: null }));
 
 export default function App() {
-  const [ringIds, setRingIds] = useState(FALLBACK_RING_IDS);
+  const [ringRows, setRingRows] = useState(FALLBACK_ROWS);
+  const ringIds = ringRows.map((r) => r.ring_id);
   const [selectedRingId, setSelectedRingId] = useState(null);
   const [ring, setRing] = useState(null);
   const [explanation, setExplanation] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [queueError, setQueueError] = useState(null);
+  // "Up to time step" cutoff -- there's no live feed here, and Elliptic/PaySim never
+  // published real dates, only an abstract time-step ordering (1..49 for Elliptic) used
+  // for the train/test split. null means "no cutoff, show everything". maxTimeStep comes
+  // back from the server so the input's bounds always match whatever data it actually has.
+  const [beforeTimeStep, setBeforeTimeStep] = useState(null);
+  const [maxTimeStep, setMaxTimeStep] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
     api
-      .listRings()
+      .listRings(20, beforeTimeStep)
       .then((res) => {
         if (cancelled) return;
-        const ids = res.rings.map((r) => r.ring_id);
-        if (ids.length > 0) {
-          setRingIds(ids);
-          setSelectedRingId(ids[0]);
+        setMaxTimeStep(res.max_time_step ?? null);
+        if (res.rings.length > 0) {
+          setRingRows(res.rings);
+          setSelectedRingId(res.rings[0].ring_id);
+          setQueueError(null);
         } else {
-          setQueueError("Server has no rings above threshold right now.");
+          setRingRows([]);
+          setQueueError(
+            beforeTimeStep != null
+              ? `No rings at or before time step ${beforeTimeStep}.`
+              : "Server has no rings above threshold right now."
+          );
         }
       })
       .catch((err) => {
@@ -44,7 +58,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [beforeTimeStep]);
 
   useEffect(() => {
     if (!selectedRingId) return;
@@ -78,10 +92,13 @@ export default function App() {
 
       <main className="app-body">
         <AlertQueue
-          ringIds={ringIds}
+          ringRows={ringRows}
           selectedRingId={selectedRingId}
           onSelect={setSelectedRingId}
           queueError={queueError}
+          beforeTimeStep={beforeTimeStep}
+          onBeforeTimeStepChange={setBeforeTimeStep}
+          maxTimeStep={maxTimeStep}
         />
         <RingGraphView
           ring={ring}

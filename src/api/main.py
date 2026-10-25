@@ -152,8 +152,33 @@ def create_app() -> FastAPI:
     def health() -> HealthResponse:
         return HealthResponse(status="ok", model_loaded=app.state.gg.model is not None)
 
+    def _ring_time_array(state: "AppState"):
+        """The per-node time-step tensor backing `state.data`, or None if there isn't one
+        (the DummyModel stub has no time array at all). Handles both the homogeneous Data
+        used for Elliptic/PaySim (`data.time`) and HeteroData (`data[target_node_type].time`,
+        used for IEEE-CIS) -- whichever shape `state.data` happens to be."""
+        data = state.data
+        try:
+            nt = getattr(data, "target_node_type", None)
+            if nt is not None and hasattr(data, "node_types"):
+                return getattr(data[nt], "time", None)
+            return getattr(data, "time", None)
+        except Exception:
+            return None
+
+    def _ring_time_step(state: "AppState", ring) -> int | None:
+        """Latest time-step among a ring's member nodes -- i.e. when this ring was most
+        recently active, in the dataset's own (non-calendar) time ordering."""
+        times = _ring_time_array(state)
+        if times is None:
+            return None
+        try:
+            return int(max(int(times[n]) for n in ring.node_ids))
+        except Exception:
+            return None
+
     @app.get("/rings", response_model=RingsResponse)
-    def list_rings(limit: int = 20) -> RingsResponse:
+    def list_rings(limit: int = 20, before_time_step: int | None = None) -> RingsResponse:
         """Which ring_ids actually exist on THIS running server, highest score first.
 
         Added because the dashboard had no way to discover real ring_ids and was relying on a
@@ -164,15 +189,35 @@ def create_app() -> FastAPI:
         another, even with the same checkpoint and the same code -- that's not a bug, it's an
         inherent floating-point portability gap, which is exactly why this endpoint exists:
         always ask the server you're actually talking to, never assume.
+
+        `before_time_step`: optional cutoff. Elliptic/PaySim split train/test by an abstract
+        time-step index (1..49 for Elliptic), not a real date -- there isn't one published.
+        Passing this filters to rings whose most recent member transaction is at or before
+        that step, so an analyst can manually set "how far into the data" to look, since there
+        is no live feed to read a current time from. Rings with no time info (no time array
+        loaded, e.g. the demo stub) are excluded once a cutoff is given, since "before X"
+        can't be answered for them.
         """
         state: AppState = app.state.gg
-        ranked = sorted(state.rings.values(), key=lambda r: -r.score)[:limit]
+        times = _ring_time_array(state)
+        max_time_step = int(max(int(t) for t in times)) if times is not None and len(times) else None
+
+        candidates = list(state.rings.values())
+        rows = []
+        for r in candidates:
+            t = _ring_time_step(state, r)
+            if before_time_step is not None and (t is None or t > before_time_step):
+                continue
+            rows.append((r, t))
+
+        ranked = sorted(rows, key=lambda rt: -rt[0].score)[:limit]
         return RingsResponse(
             rings=[
-                RingSummary(ring_id=r.ring_id, score=r.score, size=r.size, pattern=r.pattern)
-                for r in ranked
+                RingSummary(ring_id=r.ring_id, score=r.score, size=r.size, pattern=r.pattern, time_step=t)
+                for r, t in ranked
             ],
-            total=len(state.rings),
+            total=len(rows),
+            max_time_step=max_time_step,
         )
 
     @app.get("/score/{node_idx}", response_model=ScoreResponse)
