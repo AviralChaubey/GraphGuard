@@ -58,7 +58,17 @@ class AppState:
 
 
 def _load_state() -> AppState:
-    """See module docstring: this is the one function to change once A/B land real code."""
+    """Real model when GRAPHGUARD_CHECKPOINT is set, otherwise the DummyModel stub.
+
+    Real mode (homogeneous datasets only: elliptic, paysim):
+        GRAPHGUARD_CHECKPOINT=results/checkpoints/elliptic/best.pt
+        GRAPHGUARD_DATASET=elliptic          (optional, defaults to data.dataset in the config)
+    Leaving GRAPHGUARD_CHECKPOINT unset keeps the stub, so the unit tests never need data.
+    """
+    checkpoint = os.environ.get("GRAPHGUARD_CHECKPOINT")
+    if checkpoint:
+        return _load_real_state(checkpoint, os.environ.get("GRAPHGUARD_DATASET"))
+
     from src._stubs.dummy_model import DummyModel
     from src._stubs.ring import synthetic_star_graph
 
@@ -66,10 +76,46 @@ def _load_state() -> AppState:
     data, ring = synthetic_star_graph()
     explainer = GNNExplainerWrapper(model)
     logger.warning(
-        "API running against DummyModel + a synthetic ring -- replace _load_state() once "
-        "A's data loader and B's trained model + extract_rings() are available."
+        "API running against DummyModel + a synthetic ring -- set GRAPHGUARD_CHECKPOINT to "
+        "use a real trained model."
     )
     return AppState(model=model, data=data, rings={ring.ring_id: ring}, explainer=explainer)
+
+
+def _load_real_state(checkpoint: str, dataset: Optional[str]) -> AppState:
+    from src.graph import load_pyg
+    from src.models.graphguard import GraphGuardModel
+    from src.ring.extract import extract_rings
+
+    dataset = dataset or cfg.get("data", {}).get("dataset", "elliptic")
+    model = GraphGuardModel.load(checkpoint)
+    model.eval()
+    data = load_pyg(dataset)
+    if hasattr(data, "edge_index_dict"):
+        raise RuntimeError(
+            f"dataset '{dataset}' is a heterogeneous graph; the explain endpoints support "
+            "homogeneous graphs only (elliptic, paysim)."
+        )
+
+    # On real homogeneous graphs label -1 means "label unknown" (most Elliptic transactions),
+    # NOT "entity node". The API's entity check reads data.y, so give it a copy with no -1s
+    # and keep the true labels under data.y_true.
+    data.y_true = data.y.clone()
+    data.y = data.y.clamp(min=0)
+
+    with torch.no_grad():
+        scores = model(data)["fraud_score"]
+    ring_cfg = cfg.get("ring", {})
+    ring_list = extract_rings(
+        data, scores,
+        threshold=ring_cfg.get("score_threshold", 0.7),
+        min_size=ring_cfg.get("min_size", 3),
+    )
+    logger.info("Real model loaded: dataset=%s nodes=%d rings=%d", dataset, data.x.size(0), len(ring_list))
+    return AppState(
+        model=model, data=data, rings={r.ring_id: r for r in ring_list},
+        explainer=GNNExplainerWrapper(model),
+    )
 
 
 def create_app() -> FastAPI:
