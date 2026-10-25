@@ -60,15 +60,14 @@ def _score_and_rings(model, data, ring_cfg: dict):
     `extract_rings()`. B can change everything inside the model without
     breaking evaluation.
 
-    Ring extraction is homogeneous-graph-only right now (see the module
-    docstring in src/models/graphguard.py for the hetero gap -- that's a
-    separate, not-yet-done piece of work, not a bug in the model itself).
-    A HeteroData input must still produce real detection metrics, so a ring
-    extraction failure here is caught and reported as "no rings" rather than
-    letting it take down the fraud_score/PR-AUC numbers with it.
+    extract_rings() now handles HeteroData too (see src/ring/extract.py), so this
+    no longer special-cases it -- it used to unconditionally skip ring extraction
+    for any HeteroData input, which was correct when that guard was written but
+    went stale the moment hetero support landed, silently hiding real ring output
+    behind a warning that was no longer true. Still wrapped in try/except: a ring
+    extraction failure must never take down the fraud_score/PR-AUC numbers with it.
     """
     import torch
-    from torch_geometric.data import HeteroData
 
     from src.ring.extract import extract_rings
 
@@ -77,18 +76,16 @@ def _score_and_rings(model, data, ring_cfg: dict):
         out = model(data)
 
     fraud_score = out["fraud_score"].cpu()
-    if isinstance(data, HeteroData):
-        log.warning(
-            "ring extraction does not support heterogeneous graphs yet "
-            "(known gap, see src/models/graphguard.py) -- skipping rings, "
-            "detection metrics are still computed from fraud_score."
+    try:
+        rings = extract_rings(
+            data, fraud_score,
+            threshold=ring_cfg["score_threshold"],
+            min_size=ring_cfg["min_size"],
         )
-        return fraud_score.numpy(), []
-    rings = extract_rings(
-        data, fraud_score,
-        threshold=ring_cfg["score_threshold"],
-        min_size=ring_cfg["min_size"],
-    )
+    except Exception as e:                            # noqa: BLE001
+        log.warning("ring extraction failed (%s) -- detection metrics are "
+                    "still computed from fraud_score.", e)
+        rings = []
     return fraud_score.numpy(), rings
 
 

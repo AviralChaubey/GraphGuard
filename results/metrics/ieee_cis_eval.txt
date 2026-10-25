@@ -1,36 +1,18 @@
 Detection results (test split)
 ================================================
 
-[majority (never fraud)]
-n=175,998 pos=6,063 (3.445%)
-PR-AUC=0.0344  ROC-AUC=0.5000  F1=0.0666 @thr=0.000  F1@0.5=0.0000
-P@50=0.040  P@100=0.040  P@500=0.044  P@1000=0.058
-
-[logistic regression]
-n=175,998 pos=6,063 (3.445%)
-PR-AUC=0.2100  ROC-AUC=0.8018  F1=0.2623 @thr=0.767  F1@0.5=0.1691
-P@50=1.000  P@100=0.990  P@500=0.660  P@1000=0.463
-
-[gradient boosting]
-n=175,998 pos=6,063 (3.445%)
-PR-AUC=0.4694  ROC-AUC=0.8835  F1=0.4665 @thr=0.873  F1@0.5=0.3040
-P@50=0.980  P@100=0.900  P@500=0.914  P@1000=0.904
-
 [GraphGuard]
 n=175,998 pos=6,063 (3.445%)
 PR-AUC=0.1369  ROC-AUC=0.7447  F1=0.2161 @thr=0.678  F1@0.5=0.1614
 P@50=0.540  P@100=0.350  P@500=0.462  P@1000=0.351
 
 
-model                       pr_auc      lift
---------------------------------------------
-gradient boosting           0.4694          
-logistic regression         0.2100    -55.3%
-GraphGuard                  0.1369    -70.8%
-majority (never fraud)      0.0344    -92.7%
+model           pr_auc      lift
+--------------------------------
+GraphGuard      0.1369          
 
 
 Ring quality
 ================================================
-rings=0  mean size=0.0
-purity=0.000 (weighted 0.000)  consolidation=0.0 alerts/case  coverage=0.000
+rings=447  mean size=64.3
+purity=0.120 (weighted 0.170)  consolidation=64.3 alerts/case  coverage=0.236
