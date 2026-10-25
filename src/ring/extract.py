@@ -73,12 +73,57 @@ def _classify_pattern(g: nx.Graph) -> str:
     return "unknown"
 
 
+MAX_ENTITY_GROUP = 500  # a shared entity linking more candidates than this is skipped (clique blow-up)
+
+
+def _is_hetero(data) -> bool:
+    return hasattr(data, "edge_index_dict") and not hasattr(data, "edge_index")
+
+
+def _target_projection(data, candidate_nodes: np.ndarray) -> nx.Graph:
+    """Heterogeneous graphs (IEEE-CIS: transaction/card/device/...): project onto the target
+    node type. Two candidate transactions are linked when they share an entity node (same
+    card, same device, ...), or when a direct target-target edge exists. Node ids in the result
+    are indices within the target type, matching the shape of `scores`.
+    """
+    target_nt = getattr(data, "target_node_type", "transaction")
+    cand = set(int(n) for n in candidate_nodes)
+    g = nx.Graph()
+    g.add_nodes_from(cand)
+
+    for (src_t, _rel, dst_t), ei in data.edge_index_dict.items():
+        ei = ei.detach().cpu().numpy() if torch.is_tensor(ei) else np.asarray(ei)
+        if src_t == target_nt and dst_t == target_nt:
+            for s, d in zip(ei[0].tolist(), ei[1].tolist()):
+                if s in cand and d in cand and s != d:
+                    g.add_edge(s, d)
+        elif src_t == target_nt or dst_t == target_nt:
+            t_row, e_row = (0, 1) if src_t == target_nt else (1, 0)
+            groups: dict[int, list[int]] = {}
+            for t, e in zip(ei[t_row].tolist(), ei[e_row].tolist()):
+                if t in cand:
+                    groups.setdefault(e, []).append(t)
+            for members in groups.values():
+                members = sorted(set(members))
+                if len(members) < 2:
+                    continue
+                if len(members) > MAX_ENTITY_GROUP:
+                    logger.warning("extract_rings: skipping shared entity linking %d candidates", len(members))
+                    continue
+                for i in range(len(members)):
+                    for j in range(i + 1, len(members)):
+                        g.add_edge(members[i], members[j])
+    return g
+
+
 def extract_rings(data, scores: torch.Tensor | np.ndarray, threshold: float = 0.7, min_size: int = 3) -> list["Ring"]:
     """Threshold nodes by `scores`, build the induced subgraph on the survivors, split it
     into Louvain communities, and classify each community's topology.
 
     Args:
-        data: a torch_geometric Data (or anything exposing `.edge_index` and `.num_nodes`).
+        data: a torch_geometric Data (or anything exposing `.edge_index` and `.num_nodes`), or a
+            HeteroData, in which case rings are built over the target node type, linking nodes
+            that share an entity (card, device, ...).
         scores: per-node risk score in [0, 1], e.g. GraphGuardModel's `fraud_score` output,
             or fraud_score and anomaly_score combined upstream (that combination is a modeling
             choice left to the caller, not baked in here).
@@ -101,15 +146,17 @@ def extract_rings(data, scores: torch.Tensor | np.ndarray, threshold: float = 0.
     if len(candidate_nodes) < min_size:
         return []
 
-    # Build the full graph once, then take the induced subgraph on candidates -- cheaper
-    # than filtering edges twice, and networkx's induced_subgraph handles the edge-list
-    # intersection correctly.
-    edge_index = data.edge_index.detach().cpu().numpy() if torch.is_tensor(data.edge_index) else data.edge_index
-    full_graph = nx.Graph()
-    full_graph.add_nodes_from(range(int(data.num_nodes)))
-    full_graph.add_edges_from(zip(edge_index[0].tolist(), edge_index[1].tolist()))
-
-    induced = full_graph.subgraph(candidate_nodes.tolist())
+    if _is_hetero(data):
+        induced = _target_projection(data, candidate_nodes)
+    else:
+        # Build the full graph once, then take the induced subgraph on candidates -- cheaper
+        # than filtering edges twice, and networkx's induced_subgraph handles the edge-list
+        # intersection correctly.
+        edge_index = data.edge_index.detach().cpu().numpy() if torch.is_tensor(data.edge_index) else data.edge_index
+        full_graph = nx.Graph()
+        full_graph.add_nodes_from(range(int(data.num_nodes)))
+        full_graph.add_edges_from(zip(edge_index[0].tolist(), edge_index[1].tolist()))
+        induced = full_graph.subgraph(candidate_nodes.tolist())
 
     communities = nx.algorithms.community.louvain_communities(induced, seed=42)
 
