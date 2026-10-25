@@ -70,6 +70,44 @@ class GraphBundle:
         with open(out_dir / "summary.txt", "w") as f:
             f.write(self.summary() + "\n")
 
+    @classmethod
+    def load(cls, out_dir: Path, name: str, target_node_type: str = "transaction") -> "GraphBundle":
+        """Rebuild a GraphBundle from files written by save() — the read side of
+        save(), so training/evaluation can re-run from data/processed/ without
+        re-parsing the raw dataset files (which are large and, for IEEE-CIS in
+        particular, not ours to redistribute — only the derived arrays are)."""
+        out_dir = Path(out_dir)
+        b = cls(name=name, target_node_type=target_node_type)
+
+        for p in sorted(out_dir.glob("nodes_*.*")):
+            if p.suffix not in (".csv", ".parquet"):
+                continue
+            nt = p.stem[len("nodes_"):]
+            b.nodes[nt] = pd.read_parquet(p) if p.suffix == ".parquet" else pd.read_csv(p)
+
+        for p in sorted(out_dir.glob("edges_*.*")):
+            if p.suffix not in (".csv", ".parquet"):
+                continue
+            parts = p.stem[len("edges_"):].split("__")
+            if len(parts) != 3:
+                continue
+            b.edges[tuple(parts)] = (
+                pd.read_parquet(p) if p.suffix == ".parquet" else pd.read_csv(p)
+            )
+
+        arrays_path = out_dir / "arrays.npz"
+        if arrays_path.exists():
+            z = np.load(arrays_path)
+            for key in z.files:
+                kind, _, nt = key.partition("__")
+                if kind == "feat":
+                    b.features[nt] = z[key]
+                elif kind == "label":
+                    b.labels[nt] = z[key]
+                elif kind == "time":
+                    b.time[nt] = z[key]
+        return b
+
 
 def temporal_split(time_array: np.ndarray, train_ratio: float = 0.7):
     """Split by time so we never train on the future. Returns boolean masks."""

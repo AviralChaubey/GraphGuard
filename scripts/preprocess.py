@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
 
-from src.data import load_dataset, temporal_split
+from src.data import LOADERS, temporal_split
 from src.graph import add_network_features, normalize_features
 from src.utils.config import get_logger, load_config, processed_dir, set_seed
 
@@ -42,7 +42,11 @@ def main() -> None:
         kwargs["nrows"] = args.nrows
 
     log.info("loading %s", args.dataset)
-    bundle = load_dataset(args.dataset, **kwargs)
+    # Always re-parse the raw files here, never the data/processed/ cache --
+    # this script's whole job is to (re)build that cache, so load_dataset()'s
+    # cache-preferring shortcut would make a re-run of preprocess.py just
+    # re-save its own stale output and never pick up a code or raw-data change.
+    bundle = LOADERS[args.dataset](**kwargs)
 
     if args.network_features:
         bundle = add_network_features(bundle)

@@ -27,7 +27,7 @@ model:
   learning_rate: 0.001
   weight_decay: 0.0005
   batch_size: 1024
-  early_stopping_patience: 15
+  early_stopping_patience: 25
   # pos_weight is recomputed from the actual training labels at run time, not
   # read from here — a hardcoded value is dataset-specific and easy to forget.
 

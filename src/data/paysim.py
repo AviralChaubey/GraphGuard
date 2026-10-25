@@ -91,19 +91,57 @@ def _balance_features(df: pd.DataFrame, n_accounts: int) -> pd.DataFrame:
     return bal.fillna(0.0)
 
 
-def load_paysim(root=None, nrows: int | None = None) -> GraphBundle:
+def load_paysim(root=None, nrows: int | None = None,
+                 max_rows: int | None = None, seed: int = 42) -> GraphBundle:
+    """
+    max_rows: if set and the full file has more rows than this, keep every
+    fraudulent row and randomly downsample the licit rows to fit the budget.
+    Unlike `nrows` (which is just `pandas.read_csv(nrows=...)` -- the first N
+    rows of the file, i.e. the earliest time steps only), this samples across
+    the WHOLE time range and keeps 100% of the fraud signal. Use this when the
+    full 6.36M-row / 9M-account graph doesn't fit in memory for training: the
+    straight head-of-file `nrows` cap is what silently produced an earlier
+    processed cache with only 233 of the real 8,213 fraud cases.
+    """
     root = raw_dir("paysim") if root is None else root
     csvs = sorted(root.rglob("*.csv"))
     if not csvs:
         raise FileNotFoundError(f"no CSV under {root}; see docs/DATASETS.md")
     log.info("reading paysim from %s", csvs[0].name)
-    df = pd.read_csv(csvs[0], nrows=nrows)
+    # float32 for the money/balance columns up front -- at full size (6.36M rows)
+    # the default float64 + the account-indexing step below was enough to exceed
+    # memory on a laptop; this dtype map alone roughly halves the frame's size.
+    dtype_map = {
+        "amount": "float32", "oldbalanceOrg": "float32", "newbalanceOrig": "float32",
+        "oldbalanceDest": "float32", "newbalanceDest": "float32",
+        "isFraud": "int8", "isFlaggedFraud": "int8", "step": "int32",
+    }
+    df = pd.read_csv(csvs[0], nrows=nrows, dtype=dtype_map)
 
-    # account node table: union of origin and destination names
-    accounts = pd.Index(pd.unique(pd.concat([df["nameOrig"], df["nameDest"]])))
-    idx = pd.Series(np.arange(len(accounts)), index=accounts)
-    df["src"] = df["nameOrig"].map(idx).astype(int)
-    df["dst"] = df["nameDest"].map(idx).astype(int)
+    if max_rows is not None and len(df) > max_rows:
+        fraud_rows = df[df["isFraud"] == 1]
+        licit_rows = df[df["isFraud"] == 0]
+        n_licit_keep = max(max_rows - len(fraud_rows), 0)
+        licit_sample = licit_rows.sample(
+            n=min(n_licit_keep, len(licit_rows)), random_state=seed
+        )
+        df = pd.concat([fraud_rows, licit_sample]).sort_values("step").reset_index(drop=True)
+        log.info(
+            "max_rows=%d: kept all %d fraud rows + %d of %d licit rows -> %d total",
+            max_rows, len(fraud_rows), len(licit_sample), len(licit_rows), len(df),
+        )
+
+    # account node table: union of origin and destination names.
+    # factorize() both columns through one shared categorical pass instead of
+    # concat+unique+Series-map -- same result (every account gets a stable
+    # contiguous id), far less peak memory: no intermediate 9M-entry lookup
+    # Series, and the id columns come out as int32 instead of the map()'s int64.
+    cat = pd.Categorical(pd.concat([df["nameOrig"], df["nameDest"]]))
+    n = len(df)
+    df["src"] = cat.codes[:n].astype(np.int32)
+    df["dst"] = cat.codes[n:].astype(np.int32)
+    accounts = pd.Index(cat.categories)
+    del cat
 
     # ---- per-account transaction aggregates --------------------------------
     out = df.groupby("src").agg(out_cnt=("amount", "size"),
