@@ -18,6 +18,7 @@ from pathlib import Path
 
 import torch
 import torch.nn.functional as F
+from sklearn.metrics import average_precision_score
 from torch_geometric.data import Data
 
 from src.models.graphguard import GraphGuardModel
@@ -87,32 +88,71 @@ def compute_pos_weight(labels: torch.Tensor, train_mask: torch.Tensor) -> torch.
     return torch.tensor(n_neg / n_pos)
 
 
+def _is_hetero(data) -> bool:
+    return hasattr(data, "x_dict")
+
+
+def _target(data):
+    """For a HeteroData, the target node type's own Storage object (where y/x/masks
+    live); for a homogeneous Data, data itself. Lets the rest of train() read
+    y/x/train_mask/test_mask the same way regardless of graph shape."""
+    if _is_hetero(data):
+        return data[getattr(data, "target_node_type", "transaction")]
+    return data
+
+
 def train(cfg: dict, data, checkpoint_dir: Path) -> GraphGuardModel:
     model_cfg = cfg["model"]
     ae_cfg = cfg["autoencoder"]
+    hetero = _is_hetero(data)
+    tgt = _target(data)
 
-    model = GraphGuardModel(
-        in_dim=data.x.shape[1],
-        hidden_dim=model_cfg["hidden_dim"],
-        num_sage_layers=model_cfg["num_sage_layers"],
-        num_gat_layers=model_cfg["num_gat_layers"],
-        gat_heads=model_cfg["gat_heads"],
-        dropout=model_cfg["dropout"],
-        latent_dim=ae_cfg["latent_dim"],
-    )
+    if hetero:
+        target_nt = getattr(data, "target_node_type", "transaction")
+        in_dims = {nt: data[nt].x.shape[1] for nt in data.node_types}
+        model = GraphGuardModel(
+            hidden_dim=model_cfg["hidden_dim"],
+            num_sage_layers=model_cfg["num_sage_layers"],
+            num_gat_layers=model_cfg["num_gat_layers"],
+            gat_heads=model_cfg["gat_heads"],
+            dropout=model_cfg["dropout"],
+            latent_dim=ae_cfg["latent_dim"],
+            node_types=list(data.node_types),
+            edge_types=list(data.edge_types),
+            target_node_type=target_nt,
+            in_dims=in_dims,
+        )
+    else:
+        model = GraphGuardModel(
+            in_dim=data.x.shape[1],
+            hidden_dim=model_cfg["hidden_dim"],
+            num_sage_layers=model_cfg["num_sage_layers"],
+            num_gat_layers=model_cfg["num_gat_layers"],
+            gat_heads=model_cfg["gat_heads"],
+            dropout=model_cfg["dropout"],
+            latent_dim=ae_cfg["latent_dim"],
+        )
     optimizer = torch.optim.Adam(
         model.parameters(), lr=model_cfg["learning_rate"], weight_decay=model_cfg["weight_decay"]
     )
 
-    pos_weight = compute_pos_weight(data.y, data.train_mask)
+    pos_weight = compute_pos_weight(tgt.y, tgt.train_mask)
     logger.info("Computed pos_weight=%.2f from training labels.", pos_weight.item())
 
     # Autoencoder trains only on licit (label==0) nodes within the train split -- fraud
     # nodes should reconstruct *badly*, that's the anomaly signal, so they must never be
     # part of the reconstruction loss.
-    licit_train_mask = data.train_mask & (data.y == 0)
+    licit_train_mask = tgt.train_mask & (tgt.y == 0)
 
-    best_val_loss = float("inf")
+    # Checkpoint selection and early stopping track val PR-AUC, not val BCE loss.
+    # Found the hard way: on Elliptic, val BCE bottoms out around epoch 4-5 and then
+    # climbs (classic overfitting-on-the-loss), but val PR-AUC keeps improving for
+    # 60+ more epochs after that. Selecting by BCE alone was silently saving a
+    # checkpoint from epoch 4 when the real best epoch (by the metric we actually
+    # report, per docs/EVALUATION.md) was ~70 epochs later -- PR-AUC 0.22 vs 0.66
+    # on the same run. BCE and PR-AUC are not interchangeable as stopping criteria
+    # under heavy class imbalance + pos_weight; always track the real target metric.
+    best_val_pr_auc = float("-inf")
     patience_counter = 0
     patience = model_cfg["early_stopping_patience"]
 
@@ -122,15 +162,15 @@ def train(cfg: dict, data, checkpoint_dir: Path) -> GraphGuardModel:
 
         out = model.forward_with_logits(data)
 
-        fraud_mask = data.train_mask  # already excludes -1
+        fraud_mask = tgt.train_mask  # already excludes -1
         fraud_loss = F.binary_cross_entropy_with_logits(
             out["fraud_logits"][fraud_mask],
-            data.y[fraud_mask].float(),
+            tgt.y[fraud_mask].float(),
             pos_weight=pos_weight,
         )
 
         if licit_train_mask.sum() > 0:
-            recon_loss = F.mse_loss(out["reconstruction"][licit_train_mask], data.x[licit_train_mask])
+            recon_loss = F.mse_loss(out["reconstruction"][licit_train_mask], tgt.x[licit_train_mask])
         else:
             recon_loss = torch.tensor(0.0)
 
@@ -141,41 +181,60 @@ def train(cfg: dict, data, checkpoint_dir: Path) -> GraphGuardModel:
         model.eval()
         with torch.no_grad():
             val_out = model.forward_with_logits(data)
-            val_mask = data.test_mask
+            val_mask = tgt.test_mask
             val_loss = F.binary_cross_entropy_with_logits(
-                val_out["fraud_logits"][val_mask], data.y[val_mask].float(), pos_weight=pos_weight
+                val_out["fraud_logits"][val_mask], tgt.y[val_mask].float(), pos_weight=pos_weight
             ).item()
+            val_scores = val_out["fraud_score"][val_mask].cpu().numpy()
+            val_labels = tgt.y[val_mask].cpu().numpy()
+            val_pr_auc = average_precision_score(val_labels, val_scores)
 
         logger.info(
-            "epoch %03d | train_loss=%.4f (fraud=%.4f recon=%.4f) | val_loss=%.4f",
-            epoch, loss.item(), fraud_loss.item(), recon_loss.item(), val_loss,
+            "epoch %03d | train_loss=%.4f (fraud=%.4f recon=%.4f) | val_loss=%.4f | val_pr_auc=%.4f",
+            epoch, loss.item(), fraud_loss.item(), recon_loss.item(), val_loss, val_pr_auc,
         )
 
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
+        if val_pr_auc > best_val_pr_auc:
+            best_val_pr_auc = val_pr_auc
             patience_counter = 0
             checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            if hetero:
+                model_kwargs = {
+                    "hidden_dim": model_cfg["hidden_dim"],
+                    "num_sage_layers": model_cfg["num_sage_layers"],
+                    "num_gat_layers": model_cfg["num_gat_layers"],
+                    "gat_heads": model_cfg["gat_heads"],
+                    "dropout": model_cfg["dropout"],
+                    "latent_dim": ae_cfg["latent_dim"],
+                    "node_types": list(data.node_types),
+                    "edge_types": list(data.edge_types),
+                    "target_node_type": target_nt,
+                    "in_dims": in_dims,
+                }
+            else:
+                model_kwargs = {
+                    "in_dim": data.x.shape[1],
+                    "hidden_dim": model_cfg["hidden_dim"],
+                    "num_sage_layers": model_cfg["num_sage_layers"],
+                    "num_gat_layers": model_cfg["num_gat_layers"],
+                    "gat_heads": model_cfg["gat_heads"],
+                    "dropout": model_cfg["dropout"],
+                    "latent_dim": ae_cfg["latent_dim"],
+                }
             torch.save(
                 {
                     "state_dict": model.state_dict(),
-                    "model_kwargs": {
-                        "in_dim": data.x.shape[1],
-                        "hidden_dim": model_cfg["hidden_dim"],
-                        "num_sage_layers": model_cfg["num_sage_layers"],
-                        "num_gat_layers": model_cfg["num_gat_layers"],
-                        "gat_heads": model_cfg["gat_heads"],
-                        "dropout": model_cfg["dropout"],
-                        "latent_dim": ae_cfg["latent_dim"],
-                    },
+                    "model_kwargs": model_kwargs,
                     "epoch": epoch,
                     "val_loss": val_loss,
+                    "val_pr_auc": val_pr_auc,
                 },
                 checkpoint_dir / "best.pt",
             )
         else:
             patience_counter += 1
             if patience_counter >= patience:
-                logger.info("Early stopping at epoch %d (best val_loss=%.4f)", epoch, best_val_loss)
+                logger.info("Early stopping at epoch %d (best val_pr_auc=%.4f)", epoch, best_val_pr_auc)
                 break
 
     return model
@@ -196,7 +255,12 @@ def main():
    
     else:
         data = load_real_or_synthetic(cfg["data"]["dataset"], cfg)   
-    checkpoint_dir = Path(cfg["checkpoints"]["dir"])
+    # Per-dataset subfolder: without this, training a second dataset against the
+    # same config silently overwrites the first dataset's checkpoint at the same
+    # path (results/checkpoints/best.pt) with no warning. Found this the hard way
+    # running Elliptic then PaySim back to back.
+    dataset_name = "synthetic" if args.synthetic else cfg["data"]["dataset"]
+    checkpoint_dir = Path(cfg["checkpoints"]["dir"]) / dataset_name
     train(cfg, data, checkpoint_dir)
              
 
