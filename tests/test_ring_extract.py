@@ -121,3 +121,34 @@ def test_ring_score_is_mean_of_member_scores():
     assert len(rings) == 1
     expected = np.mean([0.8, 0.9, 1.0, 0.7, 0.6])
     assert abs(rings[0].score - expected) < 1e-6
+
+
+def test_extract_rings_hetero_shared_device():
+    """HeteroData: 5 high-score transactions share one device -> one ring; low-score ones ignored."""
+    from torch_geometric.data import HeteroData
+
+    data = HeteroData()
+    data["transaction"].x = torch.zeros(8, 2)
+    data["device"].x = torch.zeros(2, 2)
+    data.target_node_type = "transaction"
+    # transactions 0-4 -> device 0 ; transactions 5-7 -> device 1
+    src = torch.tensor([0, 1, 2, 3, 4, 5, 6, 7])
+    dst = torch.tensor([0, 0, 0, 0, 0, 1, 1, 1])
+    data["transaction", "used_device", "device"].edge_index = torch.stack([src, dst])
+    scores = np.array([0.9, 0.9, 0.9, 0.9, 0.9, 0.1, 0.1, 0.1])
+
+    rings = extract_rings(data, scores, threshold=0.7, min_size=3)
+    assert len(rings) == 1
+    assert rings[0].node_ids == [0, 1, 2, 3, 4]
+    assert rings[0].size == 5
+    assert rings[0].pattern == "dense"   # all five share one device -> a clique
+
+
+def test_extract_rings_hetero_no_candidates():
+    from torch_geometric.data import HeteroData
+
+    data = HeteroData()
+    data["transaction"].x = torch.zeros(4, 2)
+    data.target_node_type = "transaction"
+    data["transaction", "used_device", "device"].edge_index = torch.tensor([[0, 1], [0, 0]])
+    assert extract_rings(data, np.zeros(4), threshold=0.7, min_size=3) == []
