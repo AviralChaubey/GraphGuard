@@ -1,0 +1,84 @@
+seed: 42
+
+data:
+  dataset: ieee_cis          # elliptic | ieee_cis | paysim  <- single source of truth
+  raw_dir: data/raw
+  processed_dir: data/processed
+  temporal_split: true       # train on past time-steps, test on future
+  train_ratio: 0.7
+
+graph:
+  node_types: [transaction, card, device, address, email, account]
+  k_hops: 2
+  add_shared_entity_edges: true
+
+# Model architecture AND its training hyperparameters live together, so a single
+# checkpoint's provenance is one block of config rather than two.
+model:
+  encoder: graphsage
+  hidden_dim: 64
+  num_sage_layers: 2
+  num_gat_layers: 2
+  gat_heads: 4
+  dropout: 0.3
+  use_autoencoder_head: true
+  # training
+  epochs: 150
+  learning_rate: 0.001
+  weight_decay: 0.0005
+  batch_size: 1024
+  early_stopping_patience: 25
+  # pos_weight is recomputed from the actual training labels at run time, not
+  # read from here — a hardcoded value is dataset-specific and easy to forget.
+
+autoencoder:
+  latent_dim: 16
+  # trained on licit (label == 0) nodes only: fraud must reconstruct badly,
+  # that poor reconstruction IS the anomaly signal.
+
+checkpoints:
+  dir: results/checkpoints
+
+# --- Workstream C -------------------------------------------------------
+explain:
+  epochs: 200          # GNNExplainer optimisation steps
+  lr: 0.01
+  top_k_edges: 8        # evidence subgraph size cap -> keeps explanations human-readable
+  edge_threshold: 0.1    # drop edges with mask weight below this even if inside top_k
+  inflow_window_hours: 24
+
+api:
+  host: "0.0.0.0"
+  port: 8000
+  cors_origins: ["http://localhost:5173"]   # vite dev server
+
+feedback:
+  store_path: "results/feedback.jsonl"
+
+dashboard:
+  api_base_url: "http://localhost:8000"
+
+ring:
+  community_method: louvain
+  min_size: 3
+  score_threshold: 0.7
+
+eval:
+  # PR-AUC is the headline metric, not accuracy — see docs/EVALUATION.md
+  primary_metric: pr_auc
+  precision_at_k: [50, 100, 500, 1000]
+  run_baselines: true
+  include_network_baseline: true    # the honest baseline: does OUR gnn beat
+                                    # gradient boosting + degree/pagerank?
+
+sampler:
+  k_hops: 2
+  max_per_hop: 5000                 # without this, one hop through a hub entity
+                                    # pulls in the entire graph
+
+neo4j:
+  uri: bolt://localhost:7687
+  user: neo4j
+  database: neo4j
+  batch_size: 10000
+  # password comes from the NEO4J_PASSWORD environment variable — never commit it
