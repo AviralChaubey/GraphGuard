@@ -118,6 +118,14 @@ class GNNExplainerWrapper:
         # instead of drifting run to run.
         self.seed = cfg.get("seed", full_cfg.get("seed", 42))
 
+        # Message passing only ever looks `num_hops` steps around a node, so on big graphs we
+        # explain on that neighbourhood alone (same answer, far faster). Small graphs are
+        # explained whole, exactly as before.
+        self.max_full_graph_nodes = cfg.get("max_full_graph_nodes", 5000)
+        from torch_geometric.nn import MessagePassing
+        # one hop per message-passing layer; if none are found, be generous rather than wrong
+        self.num_hops = sum(isinstance(m, MessagePassing) for m in model.modules()) or 4
+
         self._adapter = _ModelAdapter(model)
         self._explainer = Explainer(
             model=self._adapter,
@@ -156,6 +164,10 @@ class GNNExplainerWrapper:
         if edge_attr is not None:
             explain_kwargs["edge_attr"] = edge_attr
 
+        n_nodes = int(data.x.size(0))
+        if n_nodes > self.max_full_graph_nodes:
+            return self._explain_neighbourhood(data, target_idx, explain_kwargs)
+
         explanation = self._explainer(
             x=data.x, edge_index=data.edge_index, index=target_idx, **explain_kwargs
         )
@@ -176,6 +188,42 @@ class GNNExplainerWrapper:
             edge_mask=edge_mask,
             node_feature_mask=node_feature_mask,
             prediction=prediction,
+        )
+
+    def _explain_neighbourhood(self, data, target_idx: int, explain_kwargs: dict) -> ExplainerOutput:
+        """Explain on the `num_hops`-hop neighbourhood of the target, then map the masks back
+        to the full graph's indexing (edges/nodes outside the neighbourhood get 0)."""
+        from torch_geometric.utils import k_hop_subgraph
+
+        subset, sub_edge_index, mapping, sub_edge_bool = k_hop_subgraph(
+            int(target_idx), self.num_hops, data.edge_index,
+            relabel_nodes=True, num_nodes=int(data.x.size(0)),
+        )
+        local_idx = int(mapping[0])
+        kwargs = {}
+        if "edge_attr" in explain_kwargs:
+            kwargs["edge_attr"] = explain_kwargs["edge_attr"][sub_edge_bool]
+
+        explanation = self._explainer(
+            x=data.x[subset], edge_index=sub_edge_index, index=local_idx, **kwargs
+        )
+
+        n_edges = int(data.edge_index.size(1))
+        edge_mask = np.zeros(n_edges, dtype=np.float32)
+        edge_mask[sub_edge_bool.cpu().numpy()] = explanation.edge_mask.detach().cpu().numpy()
+
+        sub_node_mask = explanation.node_mask.detach().cpu().numpy()
+        node_feature_mask = np.zeros((int(data.x.size(0)), sub_node_mask.shape[-1]), dtype=np.float32)
+        node_feature_mask[subset.cpu().numpy()] = sub_node_mask
+
+        raw_prediction = explanation.prediction
+        if raw_prediction.numel() > 1:
+            raw_prediction = raw_prediction[local_idx]
+        return ExplainerOutput(
+            target_idx=int(target_idx),
+            edge_mask=edge_mask,
+            node_feature_mask=node_feature_mask,
+            prediction=float(raw_prediction.detach().cpu().item()),
         )
 
     def explain_ring(self, data, ring) -> ExplainerOutput:
